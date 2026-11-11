@@ -12,4 +12,5 @@
 /desktop/test-results/
 /desktop/playwright-report/
 .DS_Store
-/docs/
+scripts/__pycache__/
+/release-assets/

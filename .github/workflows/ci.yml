@@ -1,0 +1,184 @@
+name: CI and release
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: Verify on ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-24.04
+          - name: Windows
+            os: windows-2022
+          - name: macOS
+            os: macos-15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+        with:
+          workspaces: |
+            . -> target
+            desktop/src-tauri -> target
+          key: verify-${{ matrix.os }}
+      - name: Test and lint the core proxy
+        run: |
+          cargo test --locked
+          cargo clippy --all-targets --locked -- -D warnings
+      - name: Test and lint the desktop app
+        if: runner.os != 'Linux'
+        run: |
+          cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
+          cargo clippy --all-targets --locked --manifest-path desktop/src-tauri/Cargo.toml -- -D warnings
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: runner.os == 'Linux'
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: runner.os == 'Linux'
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Validate versions and release notes
+        if: runner.os == 'Linux'
+        run: python scripts/release.py validate
+      - name: Test release tooling
+        if: runner.os == 'Linux'
+        run: python -m unittest discover -s scripts/tests -v
+      - name: Build frontend and run browser tests
+        if: runner.os == 'Linux'
+        working-directory: desktop
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          npx playwright install --with-deps chromium webkit
+          npm run test:ui
+
+  plan:
+    name: Decide whether to release
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      should_build: ${{ steps.release.outputs.should_build }}
+      should_publish: ${{ steps.release.outputs.should_publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.14'
+      - id: release
+        name: Skip already published versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/release.py plan
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: plan
+    if: needs.plan.outputs.should_build == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x86_64
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+          - platform: darwin-aarch64
+            os: macos-15
+            target: aarch64-apple-darwin
+            bundles: dmg
+          - platform: darwin-x86_64
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            bundles: dmg
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup show
+          rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+        with:
+          workspaces: |
+            . -> target
+            desktop/src-tauri -> target
+          key: build-${{ matrix.platform }}
+      - name: Build the command-line proxy
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Build desktop installers
+        working-directory: desktop
+        run: |
+          npm ci --no-audit --no-fund
+          npm run tauri -- build --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} -- --locked
+      - name: Collect installers and build metadata
+        run: python scripts/release.py collect ${{ matrix.platform }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ matrix.platform }}
+          path: release-assets/${{ matrix.platform }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish complete GitHub Release
+    needs: [plan, build]
+    if: needs.plan.outputs.should_publish == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.14'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+      - name: Verify all platforms and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/release.py publish release-assets
