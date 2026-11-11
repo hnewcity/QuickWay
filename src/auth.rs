@@ -302,17 +302,43 @@ fn assemble_credential(target: &str, read: impl Fn(&str) -> Result<String>) -> R
     Ok(combined)
 }
 
+/// Resolve `account@service` the way Python keyring's Windows backend does:
+/// the plain `service` record wins when its user name is `account`; the
+/// compound `account@service` record is only a fallback. keyring moves the
+/// previous plain record there on each write, so it can hold an expired session.
+#[cfg(any(windows, test))]
+fn keyring_lookup(
+    target: &str,
+    read: impl Fn(&str) -> Result<Option<(String, String)>>,
+) -> Result<Option<String>> {
+    if let Some((account, service)) = target.split_once('@')
+        && let Some((user, secret)) = read(service)?
+        && user == account
+    {
+        return Ok(Some(secret));
+    }
+    Ok(read(target)?.map(|(_, secret)| secret))
+}
+
 #[cfg(windows)]
 fn read_credential(target: &str) -> Result<String> {
+    keyring_lookup(target, read_windows_credential)?
+        .context("Quick credential is unavailable in Windows Credential Manager; sign in to Quick")
+}
+
+/// Read one generic credential, returning its user name and decoded secret.
+/// `Ok(None)` means the record does not exist.
+#[cfg(windows)]
+fn read_windows_credential(target: &str) -> Result<Option<(String, String)>> {
     use windows_sys::Win32::Security::Credentials::{
         CRED_TYPE_GENERIC, CREDENTIALW, CredFree, CredReadW,
     };
     let name: Vec<u16> = target.encode_utf16().chain(Some(0)).collect();
     let mut ptr: *mut CREDENTIALW = std::ptr::null_mut();
     // CredRead returns an OS-owned allocation, freed on all paths before parsing.
-    let bytes = unsafe {
+    let (user, bytes) = unsafe {
         if CredReadW(name.as_ptr(), CRED_TYPE_GENERIC, 0, &mut ptr) == 0 {
-            bail!("Quick credential is unavailable in Windows Credential Manager; sign in to Quick")
+            return Ok(None);
         }
         let size = (*ptr).CredentialBlobSize as usize;
         if size > 65536 || !size.is_multiple_of(2) || (size != 0 && (*ptr).CredentialBlob.is_null())
@@ -320,13 +346,20 @@ fn read_credential(target: &str) -> Result<String> {
             CredFree(ptr.cast());
             bail!("Invalid Quick credential blob")
         }
+        let user_ptr = (*ptr).UserName;
+        let user = if user_ptr.is_null() {
+            String::new()
+        } else {
+            let len = (0..).take_while(|&i| *user_ptr.add(i) != 0).count();
+            String::from_utf16_lossy(std::slice::from_raw_parts(user_ptr, len))
+        };
         let result = if size == 0 {
             Vec::new()
         } else {
             std::slice::from_raw_parts((*ptr).CredentialBlob, size).to_vec()
         };
         CredFree(ptr.cast());
-        result
+        (user, result)
     };
     let units: Vec<u16> = bytes
         .as_chunks::<2>()
@@ -334,7 +367,8 @@ fn read_credential(target: &str) -> Result<String> {
         .iter()
         .map(|b| u16::from_le_bytes([b[0], b[1]]))
         .collect();
-    String::from_utf16(&units).context("Invalid Quick credential encoding")
+    let secret = String::from_utf16(&units).context("Invalid Quick credential encoding")?;
+    Ok(Some((user, secret)))
 }
 
 #[cfg(target_os = "macos")]
@@ -530,5 +564,42 @@ mod tests {
             ))
             .is_err()
         );
+    }
+    #[test]
+    fn keyring_lookup_prefers_plain_service_record_like_python_keyring() {
+        let store = |records: &'static [(&'static str, &'static str, &'static str)]| {
+            move |target: &str| -> Result<Option<(String, String)>> {
+                Ok(records
+                    .iter()
+                    .find(|(name, _, _)| *name == target)
+                    .map(|(_, user, secret)| (user.to_string(), secret.to_string())))
+            }
+        };
+        // Quick rewrites the plain record; a stale compound record must not win.
+        let both = store(&[
+            ("svc", "session", "fresh"),
+            ("session@svc", "session", "stale"),
+        ]);
+        assert_eq!(
+            keyring_lookup("session@svc", both).unwrap().as_deref(),
+            Some("fresh")
+        );
+        // A plain record that belongs to another account is ignored.
+        let other = store(&[
+            ("svc", "someone", "other"),
+            ("session@svc", "session", "mine"),
+        ]);
+        assert_eq!(
+            keyring_lookup("session@svc", other).unwrap().as_deref(),
+            Some("mine")
+        );
+        // Older layouts with only the compound record keep working.
+        let compound = store(&[("session@svc", "session", "only")]);
+        assert_eq!(
+            keyring_lookup("session@svc", compound).unwrap().as_deref(),
+            Some("only")
+        );
+        assert!(keyring_lookup("session@svc", store(&[])).unwrap().is_none());
+        assert!(keyring_lookup("session@svc", |_| bail!("unreadable")).is_err());
     }
 }
