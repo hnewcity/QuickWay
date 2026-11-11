@@ -1,7 +1,7 @@
 # Automatic releases
 
-GitHub Actions runs the Rust tests and Clippy on Linux, Windows and macOS, the release-tool tests, version
-validation, the frontend build and the browser UI tests on every pull request and push to `main`. Pull requests
+GitHub Actions runs the Rust tests and Clippy, the release-tool tests, version validation, the frontend build and
+the browser UI tests (Chromium on Windows, WebKit on macOS) on every pull request and push to `main`. Pull requests
 also build every installer, but cannot publish a release.
 
 When a new version reaches `main`, the workflow builds these packages from the same tested commit:
