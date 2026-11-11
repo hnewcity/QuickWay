@@ -141,8 +141,6 @@ jobs:
             . -> target
             desktop/src-tauri -> target
           key: build-${{ matrix.platform }}
-      - name: Build the command-line proxy
-        run: cargo build --release --locked --target ${{ matrix.target }}
       - name: Build desktop installers
         working-directory: desktop
         run: |

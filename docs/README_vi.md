@@ -66,7 +66,6 @@ Tải bản phát hành mới nhất tại [GitHub Releases](https://github.com/
 | macOS | Intel | [QuickWay_x.y.z_x64.dmg](https://github.com/hnewcity/QuickWay/releases/latest) |
 | Windows | Trình cài đặt x64 | [QuickWay_x.y.z_x64-setup.exe](https://github.com/hnewcity/QuickWay/releases/latest) |
 | Windows | Bản di động x64 | [QuickWay_x.y.z_x64-portable.exe](https://github.com/hnewcity/QuickWay/releases/latest) |
-| macOS / Windows | Proxy dòng lệnh | [quickway-cli_x.y.z_*](https://github.com/hnewcity/QuickWay/releases/latest) |
 
 > Yêu cầu Windows 10/11 x64 hoặc macOS 12 trở lên. Trình cài đặt Windows chưa được ký mã, còn bản macOS dùng chữ ký ad-hoc và chưa công chứng, nên SmartScreen hoặc Gatekeeper có thể yêu cầu xác nhận ở lần mở đầu tiên. Hãy đăng nhập Amazon Quick trên cùng máy trước.
 

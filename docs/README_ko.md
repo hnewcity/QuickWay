@@ -66,7 +66,6 @@ QuickWay는 로그인된 Amazon Quick 계정의 모델을 로컬 Anthropic 호�
 | macOS | Intel | [QuickWay_x.y.z_x64.dmg](https://github.com/hnewcity/QuickWay/releases/latest) |
 | Windows | x64 설치 프로그램 | [QuickWay_x.y.z_x64-setup.exe](https://github.com/hnewcity/QuickWay/releases/latest) |
 | Windows | x64 포터블 | [QuickWay_x.y.z_x64-portable.exe](https://github.com/hnewcity/QuickWay/releases/latest) |
-| macOS / Windows | 명령줄 프록시 | [quickway-cli_x.y.z_*](https://github.com/hnewcity/QuickWay/releases/latest) |
 
 > Windows 10/11 x64 또는 macOS 12 이상이 필요합니다. Windows 설치 프로그램은 코드 서명이 없고 macOS 빌드는 공증 없이 ad-hoc 서명되어 있어, 처음 실행할 때 SmartScreen 또는 Gatekeeper가 확인을 요청할 수 있습니다. 먼저 같은 컴퓨터에서 Amazon Quick에 로그인하세요.
 

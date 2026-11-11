@@ -66,7 +66,6 @@ Unduh rilis terbaru dari [GitHub Releases](https://github.com/hnewcity/QuickWay/
 | macOS | Intel | [QuickWay_x.y.z_x64.dmg](https://github.com/hnewcity/QuickWay/releases/latest) |
 | Windows | Installer x64 | [QuickWay_x.y.z_x64-setup.exe](https://github.com/hnewcity/QuickWay/releases/latest) |
 | Windows | Portabel x64 | [QuickWay_x.y.z_x64-portable.exe](https://github.com/hnewcity/QuickWay/releases/latest) |
-| macOS / Windows | Proxy baris perintah | [quickway-cli_x.y.z_*](https://github.com/hnewcity/QuickWay/releases/latest) |
 
 > Membutuhkan Windows 10/11 x64 atau macOS 12+. Installer Windows tidak ditandatangani dan build macOS memakai tanda tangan ad-hoc tanpa notarisasi, sehingga SmartScreen atau Gatekeeper mungkin meminta konfirmasi saat pertama kali dibuka. Masuk dulu ke Amazon Quick di komputer yang sama.
 

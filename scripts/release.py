@@ -10,7 +10,6 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-import tarfile
 import tomllib
 
 
@@ -142,20 +141,16 @@ def plan() -> None:
 
 def expected_assets(platform: str, version: str) -> list[tuple[str, str, str]]:
     """List (kind, build output relative to the repository, release asset name) for one platform."""
-    target = PLATFORMS[platform]
-    desktop_release = f"{TAURI}/target/{target}/release"
-    cli = f"target/{target}/release/quickway"
+    desktop_release = f"{TAURI}/target/{PLATFORMS[platform]}/release"
     if platform.startswith("windows"):
         return [
             ("installer", f"{desktop_release}/bundle/nsis/QuickWay_{version}_x64-setup.exe",
              f"QuickWay_{version}_x64-setup.exe"),
             ("portable", f"{desktop_release}/quickway-desktop.exe", f"QuickWay_{version}_x64-portable.exe"),
-            ("cli", f"{cli}.exe", f"quickway-cli_{version}_{platform}.exe"),
         ]
     arch = "aarch64" if platform == "darwin-aarch64" else "x64"
     return [
         ("installer", f"{desktop_release}/bundle/dmg/QuickWay_{version}_{arch}.dmg", f"QuickWay_{version}_{arch}.dmg"),
-        ("cli", cli, f"quickway-cli_{version}_{platform}.tar.gz"),
     ]
 
 
@@ -166,7 +161,7 @@ def digest(path: Path) -> str:
 
 
 def collect(platform: str, sha: str, root: Path = ROOT) -> None:
-    """Collect the platform's installers and command-line build with source-commit and checksum metadata."""
+    """Collect the platform's desktop packages with source-commit and checksum metadata."""
     version = validate(root)
     destination = root / "release-assets" / platform
     destination.mkdir(parents=True, exist_ok=True)
@@ -176,12 +171,7 @@ def collect(platform: str, sha: str, root: Path = ROOT) -> None:
         if not source.is_file() or not source.stat().st_size:
             raise ValueError(f"Expected a nonempty {kind} build output at {source_name}")
         target = destination / name
-        if name.endswith(".tar.gz"):
-            # The command-line build ships as an archive so macOS keeps its executable bit.
-            with tarfile.open(target, "w:gz") as bundle:
-                bundle.add(source, arcname="quickway")
-        else:
-            shutil.copy2(source, target)
+        shutil.copy2(source, target)
         files.append({"name": name, "sha256": digest(target), "size": target.stat().st_size})
     metadata = {"version": version, "commit": sha, "platform": platform, "target": PLATFORMS[platform], "files": files}
     (destination / f"build-{platform}.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")

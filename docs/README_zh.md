@@ -66,7 +66,6 @@ QuickWay 是一个桌面网关，通过本机的 Anthropic 兼容和 OpenAI 兼�
 | macOS | Intel | [QuickWay_x.y.z_x64.dmg](https://github.com/hnewcity/QuickWay/releases/latest) |
 | Windows | x64 安装包 | [QuickWay_x.y.z_x64-setup.exe](https://github.com/hnewcity/QuickWay/releases/latest) |
 | Windows | x64 免安装版 | [QuickWay_x.y.z_x64-portable.exe](https://github.com/hnewcity/QuickWay/releases/latest) |
-| macOS / Windows | 命令行代理 | [quickway-cli_x.y.z_*](https://github.com/hnewcity/QuickWay/releases/latest) |
 
 > 需要 Windows 10/11 x64 或 macOS 12+。Windows 安装包未做代码签名，macOS 版本使用 ad-hoc 签名且未公证，首次打开时 SmartScreen 或 Gatekeeper 可能要求你确认。请先在同一台电脑上登录 Amazon Quick。
 

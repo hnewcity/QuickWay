@@ -8,9 +8,11 @@ When a new version reaches `main`, the workflow builds these packages from the s
 
 | Platform | Files |
 |----------|-------|
-| Windows x64 | `QuickWay_<version>_x64-setup.exe` (NSIS installer), `QuickWay_<version>_x64-portable.exe`, `quickway-cli_<version>_windows-x86_64.exe` |
-| macOS Apple Silicon | `QuickWay_<version>_aarch64.dmg`, `quickway-cli_<version>_darwin-aarch64.tar.gz` |
-| macOS Intel | `QuickWay_<version>_x64.dmg`, `quickway-cli_<version>_darwin-x86_64.tar.gz` |
+| Windows x64 | `QuickWay_<version>_x64-setup.exe` (NSIS installer), `QuickWay_<version>_x64-portable.exe` |
+| macOS Apple Silicon | `QuickWay_<version>_aarch64.dmg` |
+| macOS Intel | `QuickWay_<version>_x64.dmg` |
+
+Only the desktop app is released; the command-line proxy is built from source (`cargo build --release`).
 
 All platforms must succeed and identify the same commit before publication. Uploads go to a draft first; the
 release becomes public only after every file and `SHA256SUMS.txt` have been uploaded.

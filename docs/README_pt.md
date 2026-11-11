@@ -66,7 +66,6 @@ Baixe a versão mais recente em [GitHub Releases](https://github.com/hnewcity/Qu
 | macOS | Intel | [QuickWay_x.y.z_x64.dmg](https://github.com/hnewcity/QuickWay/releases/latest) |
 | Windows | Instalador x64 | [QuickWay_x.y.z_x64-setup.exe](https://github.com/hnewcity/QuickWay/releases/latest) |
 | Windows | Portátil x64 | [QuickWay_x.y.z_x64-portable.exe](https://github.com/hnewcity/QuickWay/releases/latest) |
-| macOS / Windows | Proxy de linha de comando | [quickway-cli_x.y.z_*](https://github.com/hnewcity/QuickWay/releases/latest) |
 
 > Requer Windows 10/11 x64 ou macOS 12+. O instalador do Windows não é assinado e as versões do macOS usam assinatura ad-hoc sem notarização, então o SmartScreen ou o Gatekeeper podem pedir confirmação na primeira abertura. Antes, entre no Amazon Quick no mesmo computador.
 

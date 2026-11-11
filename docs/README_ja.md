@@ -66,7 +66,6 @@ QuickWay は、ログイン済みの Amazon Quick アカウントのモデルを
 | macOS | Intel | [QuickWay_x.y.z_x64.dmg](https://github.com/hnewcity/QuickWay/releases/latest) |
 | Windows | x64 インストーラー | [QuickWay_x.y.z_x64-setup.exe](https://github.com/hnewcity/QuickWay/releases/latest) |
 | Windows | x64 ポータブル版 | [QuickWay_x.y.z_x64-portable.exe](https://github.com/hnewcity/QuickWay/releases/latest) |
-| macOS / Windows | コマンドラインプロキシ | [quickway-cli_x.y.z_*](https://github.com/hnewcity/QuickWay/releases/latest) |
 
 > Windows 10/11 x64 または macOS 12 以降が必要です。Windows インストーラーはコード署名されておらず、macOS 版は ad-hoc 署名で公証されていないため、初回起動時に SmartScreen や Gatekeeper の確認が表示される場合があります。事前に同じコンピューターで Amazon Quick にログインしてください。
 

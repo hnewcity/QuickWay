@@ -4,7 +4,6 @@ import importlib.util
 import json
 from pathlib import Path
 import shutil
-import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -93,18 +92,19 @@ class ReleaseTests(unittest.TestCase):
     def test_complete_artifacts_generate_checksums(self) -> None:
         merged = self.installers()
         files = release.verify_assets(merged, "0.3.0", SHA)
-        self.assertEqual(len(files), 8)
+        self.assertEqual(len(files), 5)
         checksums = (merged / "SHA256SUMS.txt").read_text(encoding="utf-8").splitlines()
-        self.assertEqual(len(checksums), 7)
+        self.assertEqual(len(checksums), 4)
         names = {line.split("  ")[1] for line in checksums}
         self.assertIn("QuickWay_0.3.0_x64-setup.exe", names)
         self.assertIn("QuickWay_0.3.0_aarch64.dmg", names)
         self.assertIn("QuickWay_0.3.0_x64.dmg", names)
+        self.assertIn("QuickWay_0.3.0_x64-portable.exe", names)
 
-    def test_cli_archive_contains_the_executable(self) -> None:
+    def test_only_desktop_packages_are_released(self) -> None:
         merged = self.installers()
-        with tarfile.open(merged / "quickway-cli_0.3.0_darwin-aarch64.tar.gz") as archive:
-            self.assertEqual(archive.getnames(), ["quickway"])
+        names = {path.name for path in release.verify_assets(merged, "0.3.0", SHA)}
+        self.assertFalse(any(name.startswith("quickway-cli") for name in names))
 
     def test_missing_platform_blocks_publication(self) -> None:
         merged = self.installers()

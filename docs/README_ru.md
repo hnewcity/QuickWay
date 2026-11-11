@@ -66,7 +66,6 @@ QuickWay — это настольный шлюз, который открыва
 | macOS | Intel | [QuickWay_x.y.z_x64.dmg](https://github.com/hnewcity/QuickWay/releases/latest) |
 | Windows | Установщик x64 | [QuickWay_x.y.z_x64-setup.exe](https://github.com/hnewcity/QuickWay/releases/latest) |
 | Windows | Портативная версия x64 | [QuickWay_x.y.z_x64-portable.exe](https://github.com/hnewcity/QuickWay/releases/latest) |
-| macOS / Windows | Прокси для командной строки | [quickway-cli_x.y.z_*](https://github.com/hnewcity/QuickWay/releases/latest) |
 
 > Требуется Windows 10/11 x64 или macOS 12+. Установщик Windows не подписан, а сборки macOS подписаны ad-hoc без нотаризации, поэтому при первом запуске SmartScreen или Gatekeeper могут запросить подтверждение. Сначала войдите в Amazon Quick на том же компьютере.
 
