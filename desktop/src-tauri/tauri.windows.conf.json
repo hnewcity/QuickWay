@@ -1,0 +1,23 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "QuickWay",
+        "width": 1120,
+        "height": 790,
+        "minWidth": 900,
+        "minHeight": 640,
+        "center": true,
+        "backgroundColor": "#141510",
+        "decorations": false,
+        "shadow": true
+      }
+    ]
+  },
+  "bundle": {
+    "targets": [
+      "nsis"
+    ]
+  }
+}

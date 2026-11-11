@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="92 89 320 320" fill="none">
+  <title>QuickWay — Little Q menu bar template</title>
+  <desc>Optically adjusted black Little Q on transparency for macOS template rendering.</desc>
+  <g transform="translate(7.68 12.53) scale(0.97)" fill="#000000">
+    <path id="q-outline" fill-rule="evenodd" d="M252 114C168 114 110 165 110 244C110 323 168 374 252 374C275 374 297 369 317 359Q323 356 329 360L347 371C359 379 373 370 373 357V329Q373 319 377 311C389 289 394 268 394 244C394 165 336 114 252 114ZM252 162C194 162 158 192 158 244C158 296 194 326 252 326C310 326 346 296 346 244C346 192 310 162 252 162Z" />
+    <rect id="eye-left" x="202.0" y="214.0" width="36" height="52" rx="18.0" />
+    <rect id="eye-right" x="266.0" y="214.0" width="36" height="52" rx="18.0" />
+  </g>
+</svg>

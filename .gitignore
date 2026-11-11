@@ -1,0 +1,15 @@
+/target/
+/.research/
+/.quickway/
+*.log
+.env
+*.qwc
+/desktop/node_modules/
+/desktop/dist/
+/desktop/src-tauri/target/
+/desktop/src-tauri/gen/schemas/
+/release/
+/desktop/test-results/
+/desktop/playwright-report/
+.DS_Store
+/docs/

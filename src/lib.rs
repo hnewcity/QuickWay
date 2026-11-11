@@ -1,0 +1,14 @@
+pub mod auth;
+pub mod compat;
+pub mod converse;
+pub mod diagnostics;
+pub mod eventstream;
+pub mod local_files;
+pub mod models;
+pub mod openai;
+pub mod portable;
+pub mod server;
+pub mod session;
+pub mod streaming;
+pub mod thinking;
+pub mod upstream;

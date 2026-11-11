@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512" fill="none">
+  <title>QuickWay — Little Q, fine monochrome</title>
+  <desc>A lighter white Q with balanced eyes, a compact tail and more breathing room on a black tile.</desc>
+  <rect x="24" y="24" width="464" height="464" rx="108" fill="#000000"/>
+  <g transform="translate(7.68 12.53) scale(0.97)" fill="#FFFFFF">
+    <path id="q-outline" fill-rule="evenodd" d="M252 114C168 114 110 165 110 244C110 323 168 374 252 374C275 374 297 369 317 359Q323 356 329 360L347 371C359 379 373 370 373 357V329Q373 319 377 311C389 289 394 268 394 244C394 165 336 114 252 114ZM252 156C190 156 152 188 152 244C152 300 190 332 252 332C314 332 352 300 352 244C352 188 314 156 252 156Z"/>
+    <rect id="eye-left" x="205" y="216" width="30" height="48" rx="15"/>
+    <rect id="eye-right" x="269" y="216" width="30" height="48" rx="15"/>
+  </g>
+</svg>

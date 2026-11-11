@@ -1,0 +1,30 @@
+{
+  "name": "quickway-desktop",
+  "private": true,
+  "version": "0.3.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
+    "build": "tsc && vite build",
+    "tauri": "tauri",
+    "desktop:build": "tauri build",
+    "desktop:build:mac": "tauri build --bundles app,dmg",
+    "desktop:build:windows": "tauri build --bundles nsis",
+    "test:ui": "playwright test"
+  },
+  "dependencies": {
+    "@fontsource-variable/fraunces": "^5.3.0",
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/plugin-dialog": "^2.6.0",
+    "dompurify": "^3.3.0",
+    "marked": "^17.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "@tauri-apps/cli": "^2.12.4",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}
