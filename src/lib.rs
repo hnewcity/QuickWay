@@ -1,9 +1,16 @@
 pub mod auth;
+pub mod cloud;
+pub mod cloud_history;
+pub mod cloud_request;
+mod cloud_text;
+pub mod cloud_translate;
+pub mod cloud_wire;
 pub mod compat;
 pub mod converse;
 pub mod diagnostics;
 pub mod eventstream;
 pub mod local_files;
+pub mod model_error;
 pub mod models;
 pub mod openai;
 pub mod portable;

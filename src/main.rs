@@ -18,6 +18,9 @@ enum Command {
     Doctor {
         #[arg(long)]
         online: bool,
+        /// Make one small model request (uses quota; also enables online checks).
+        #[arg(long, value_name = "ID")]
+        probe_model: Option<String>,
         /// Explicitly allow a macOS Keychain authorization dialog.
         #[arg(long)]
         authorize_keychain: bool,
@@ -39,13 +42,23 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Doctor {
             online,
+            probe_model,
             authorize_keychain,
         } => {
             let upstream = upstream::Upstream::new(base)?;
             if authorize_keychain {
                 upstream.sessions.authorize(&upstream.client).await?;
             }
-            let report = diagnostics::report(&upstream, env!("CARGO_PKG_VERSION"), online).await;
+            let mut report = diagnostics::report(
+                &upstream,
+                env!("CARGO_PKG_VERSION"),
+                online || probe_model.is_some(),
+            )
+            .await;
+            if let Some(model) = probe_model {
+                report["inference"] = diagnostics::probe_model(&upstream, &model).await;
+                report["recent_errors"] = upstream.recent_errors().into();
+            }
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::Serve {
@@ -75,9 +88,10 @@ async fn main() -> Result<()> {
                 "QuickWay listening on http://{listen}; local key file: {}",
                 key_file.display()
             );
-            axum::serve(listener, server::router(app))
-                .with_graceful_shutdown(async {
+            axum::serve(listener, server::router(app.clone()))
+                .with_graceful_shutdown(async move {
                     let _ = tokio::signal::ctrl_c().await;
+                    app.upstream.cloud.shutdown().await;
                 })
                 .await?;
         }
@@ -110,4 +124,28 @@ fn load_or_create_key(path: &std::path::Path) -> Result<String> {
     let mut file = options.open(path)?;
     file.write_all(key.as_bytes())?;
     Ok(key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn doctor_inference_is_explicit_and_requires_a_model_id() {
+        assert!(matches!(
+            Cli::try_parse_from(["quickway", "doctor", "--online"])
+                .unwrap()
+                .command,
+            Command::Doctor {
+                online: true,
+                probe_model: None,
+                ..
+            }
+        ));
+        assert!(
+            matches!(Cli::try_parse_from(["quickway", "doctor", "--probe-model", "claude-sonnet-4-6"]).unwrap().command,
+            Command::Doctor { probe_model: Some(model), .. } if model == "claude-sonnet-4-6")
+        );
+        assert!(Cli::try_parse_from(["quickway", "doctor", "--probe-model"]).is_err());
+    }
 }

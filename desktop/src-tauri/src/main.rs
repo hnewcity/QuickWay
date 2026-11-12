@@ -40,7 +40,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             port: 8741,
-            model: String::new(),
+            model: "quick-smart".into(),
             project_dir: String::new(),
             auto_start: true,
             thinking_effort: Effort::Off,
@@ -118,6 +118,7 @@ impl Desktop {
         let mut running = self.running.lock().await;
         if let Some(RunningServer { stop, mut task }) = running.take() {
             let _ = stop.send(());
+            self.app.upstream.cloud.shutdown().await;
             if tokio::time::timeout(Duration::from_secs(3), &mut task)
                 .await
                 .is_err()
@@ -131,7 +132,7 @@ impl Desktop {
 fn claude_connection(preferences: &Preferences, key: &str) -> Value {
     let effort = preferences.thinking_effort;
     let enabled = effort != Effort::Off;
-    json!({"alwaysThinkingEnabled":enabled,"effortLevel":if enabled {effort.as_str()} else {"low"},"env": {
+    let mut config = json!({"alwaysThinkingEnabled":enabled,"effortLevel":if enabled {effort.as_str()} else {"low"},"env": {
         "ANTHROPIC_BASE_URL": format!("http://127.0.0.1:{}", preferences.port),
         // Only the bearer token: also setting ANTHROPIC_API_KEY makes Claude
         // Code warn that both are set and may ask to approve the key.
@@ -145,7 +146,16 @@ fn claude_connection(preferences: &Preferences, key: &str) -> Value {
         "ANTHROPIC_SMALL_FAST_MODEL": preferences.model,
         "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
         "ENABLE_TOOL_SEARCH": "false"
-    }})
+    }});
+    if let Some(mode) = quickway::cloud::mode(&preferences.model) {
+        // This is a client compaction budget for a routed tier, not a promise
+        // about the cloud's serving model or its native context limit.
+        config["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = "200000".into();
+        config["env"]["ANTHROPIC_CUSTOM_MODEL_OPTION"] = preferences.model.clone().into();
+        config["env"]["ANTHROPIC_CUSTOM_MODEL_OPTION_NAME"] =
+            format!("Quick {mode} (cloud tier)").into();
+    }
+    config
 }
 
 /// Codex's own effort name for a QuickWay level.
@@ -328,10 +338,12 @@ async fn get_status(state: State<'_, Desktop>) -> std::result::Result<Value, Str
         }
         Err(error) => json!({"signedIn":false,"canRefresh":false,"error":error.to_string()}),
     };
+    let last_cloud_model = upstream.last_cloud_model().await;
     Ok(json!({
         "preferences":preferences,"running":state.running.lock().await.is_some(),
         "account":account,"models":catalog.models,"modelCatalog":{"source":catalog.source,"lastUpdated":catalog.last_updated,"error":catalog.error},"claudeInstalled":platform::find_claude().is_some(),"codexInstalled":platform::find_codex().is_some(),
         "credentials":{"source":credential_source},
+        "lastCloudModel":last_cloud_model,
         "version":env!("CARGO_PKG_VERSION")
     }))
 }
@@ -455,12 +467,8 @@ async fn refresh_usage(state: State<'_, Desktop>) -> std::result::Result<Value, 
 /// Redacted support report, copied by the user and sent to whoever helps them.
 #[tauri::command]
 async fn diagnostics(state: State<'_, Desktop>) -> std::result::Result<String, String> {
-    let mut report = quickway::diagnostics::report(
-        &state.app.upstream,
-        env!("CARGO_PKG_VERSION"),
-        true,
-    )
-    .await;
+    let mut report =
+        quickway::diagnostics::report(&state.app.upstream, env!("CARGO_PKG_VERSION"), true).await;
     report["desktop"] = json!({
         "proxy_running": state.running.lock().await.is_some(),
         "port": state.preferences().port,
@@ -616,10 +624,17 @@ fn copy_codex_config(
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ChatEvent {
     Delta { text: String },
+    Model { served: String },
     Usage { input: u64, output: u64 },
     Done { reason: String },
     Cancelled,
     Error { message: String },
+}
+
+fn chat_model_event(event: &Value) -> Option<ChatEvent> {
+    quickway::cloud::served_model(&event["quickway"]).map(|served| ChatEvent::Model {
+        served: served.to_owned(),
+    })
 }
 
 async fn receive_chat(
@@ -681,6 +696,9 @@ async fn receive_chat(
                     }
                 }
                 Some("message_delta") => {
+                    if let Some(model) = chat_model_event(&event) {
+                        let _ = output.send(model);
+                    }
                     reason = event["delta"]["stop_reason"]
                         .as_str()
                         .unwrap_or("end_turn")
@@ -908,8 +926,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fresh_preferences_do_not_invent_a_model() {
-        assert!(Preferences::default().model.is_empty());
+    fn chat_model_uses_served_metadata_and_never_the_requested_or_resolved_label() {
+        let event = json!({"type":"message_delta", "model":"quick-smart", "quickway":{
+            "resolved_model":"us.anthropic.claude-opus-5-5",
+            "served_model":"us.anthropic.claude-opus-4-8"
+        }});
+        assert_eq!(
+            serde_json::to_value(chat_model_event(&event).unwrap()).unwrap(),
+            json!({"type":"model", "served":"us.anthropic.claude-opus-4-8"})
+        );
+        for event in [
+            json!({"model":"claude-opus-5-5"}),
+            json!({"quickway":{"resolved_model":"us.anthropic.claude-opus-5-5"}}),
+            json!({"quickway":{"served_model":""}}),
+            json!({"quickway":{"served_model":"https://invalid/token"}}),
+            json!({"quickway":{"served_model":"<img src=x>"}}),
+        ] {
+            assert!(chat_model_event(&event).is_none());
+        }
+    }
+
+    #[test]
+    fn fresh_preferences_use_quick_smart_for_both_launchers() {
+        let preferences: Preferences = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(preferences.model, "quick-smart");
+        assert_eq!(preferences.codex_model(), "quick-smart");
+        assert!(!quickway::models::is_gpt(preferences.codex_model()));
+        let connection = claude_connection(&preferences, "synthetic-test-key");
+        for field in [
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_SMALL_FAST_MODEL",
+        ] {
+            assert_eq!(connection["env"][field], "quick-smart");
+        }
+        assert_eq!(codex_args(&preferences, None)[..2], ["-m", "quick-smart"]);
     }
 
     #[test]
@@ -949,6 +1001,25 @@ mod tests {
         }
         assert_eq!(env["ANTHROPIC_SMALL_FAST_MODEL"], preferences.model);
         assert!(!query.contains_key("x"));
+    }
+
+    #[test]
+    fn claude_cloud_tiers_declare_a_client_budget_without_impersonating_a_model() {
+        for tier in [
+            "quick-fast",
+            "quick-balanced",
+            "quick-smart",
+            "quick-advanced",
+        ] {
+            let preferences = Preferences {
+                model: tier.into(),
+                ..Preferences::default()
+            };
+            let config = claude_connection(&preferences, "synthetic-test-key");
+            assert_eq!(config["env"]["ANTHROPIC_CUSTOM_MODEL_OPTION"], tier);
+            assert_eq!(config["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "200000");
+            assert!(config.get("modelOverrides").is_none());
+        }
     }
 
     #[test]
@@ -1030,11 +1101,12 @@ mod tests {
             &[
                 model("gpt-5.6-sol", "GPT-5.6 Sol"),
                 model("claude-sonnet-5-5", "Claude Sonnet 5.5"),
+                model("quick-smart", "Quick Smart (cloud)"),
             ],
         )
         .unwrap();
         let models = catalog["models"].as_array().unwrap();
-        assert_eq!(models.len(), 3);
+        assert_eq!(models.len(), 4);
         assert_eq!(models[1], bundled["models"][1]);
         let claude = &models[2];
         assert_eq!(claude["slug"], "claude-sonnet-5-5");
@@ -1045,6 +1117,10 @@ mod tests {
             claude["base_instructions"],
             "You are Codex, an agent based on Claude Sonnet 5.5. Work well."
         );
+        let quick = &models[3];
+        assert_eq!(quick["slug"], "quick-smart");
+        assert_eq!(quick["apply_patch_tool_type"], "freeform");
+        assert_eq!(quick["visibility"], "list");
         assert!(codex_catalog(&json!({}), &[]).is_none());
     }
 

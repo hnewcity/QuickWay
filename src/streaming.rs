@@ -1,5 +1,6 @@
 //! Convert the Quick BedrockStreamEvent envelope observed on the wire to SSE.
 use crate::eventstream::Decoder;
+use crate::model_error::ModelError;
 use futures_util::{Stream, StreamExt};
 use serde_json::{Value, json};
 use std::{
@@ -32,7 +33,7 @@ impl Translator {
             blocks: BTreeMap::new(),
         }
     }
-    pub fn ingest(&mut self, event: Value) -> Result<Vec<Value>, String> {
+    pub fn ingest(&mut self, event: Value) -> Result<Vec<Value>, ModelError> {
         let kind = event["eventType"]
             .as_str()
             .ok_or("Quick stream event has no eventType")?
@@ -51,10 +52,10 @@ impl Translator {
             return Ok(out);
         }
         if kind.contains("error") || kind.contains("exception") || kind == "usagelimitexceeded" {
-            return Err(
-                "Quick returned an error inside the model stream; check login, request and quota"
-                    .into(),
-            );
+            return Err(ModelError::from_upstream(
+                event["eventType"].as_str().unwrap_or("UpstreamError"),
+                p,
+            ));
         }
         if !self.started {
             return Err("Quick stream content precedes messageStart".into());
@@ -215,7 +216,7 @@ impl Translator {
         kind: &'static str,
         content: Value,
         out: &mut Vec<Value>,
-    ) -> Result<(), String> {
+    ) -> Result<(), ModelError> {
         let promoting = self
             .blocks
             .get(&index)
@@ -241,7 +242,7 @@ impl Translator {
         }
         Ok(())
     }
-    pub fn finish(&self) -> Result<Vec<Value>, String> {
+    pub fn finish(&self) -> Result<Vec<Value>, ModelError> {
         let reason = self
             .stop
             .as_ref()
@@ -305,17 +306,15 @@ pub fn event_stream(
             };
             match result {
                 Ok(events) => s.pending.extend(events),
-                Err(message) => {
+                Err(error) => {
                     s.done = true;
-                    s.pending.push_back(
-                        json!({"type":"error","error":{"type":"api_error","message":message}}),
-                    );
+                    s.pending.push_back(error.event());
                 }
             }
         }
     })
 }
-fn decode(s: &mut State, chunk: &[u8], eof: bool) -> Result<Vec<Value>, String> {
+fn decode(s: &mut State, chunk: &[u8], eof: bool) -> Result<Vec<Value>, ModelError> {
     let events = if s.binary {
         let events = s.decoder.push(chunk)?;
         if eof {
@@ -382,6 +381,105 @@ mod tests {
     use super::*;
     fn event(kind: &str, p: Value) -> Value {
         json!({"eventType":kind,"payload":p})
+    }
+
+    fn binary_frame(
+        message_type: &str,
+        event_header: &str,
+        event_type: &str,
+        body: &Value,
+    ) -> Vec<u8> {
+        let mut headers = Vec::new();
+        for (key, value) in [(":message-type", message_type), (event_header, event_type)] {
+            headers.push(key.len() as u8);
+            headers.extend_from_slice(key.as_bytes());
+            headers.push(7);
+            headers.extend_from_slice(&(value.len() as u16).to_be_bytes());
+            headers.extend_from_slice(value.as_bytes());
+        }
+        let body = serde_json::to_vec(body).unwrap();
+        let mut frame = ((16 + headers.len() + body.len()) as u32)
+            .to_be_bytes()
+            .to_vec();
+        frame.extend_from_slice(&(headers.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&crc32fast::hash(&frame).to_be_bytes());
+        frame.extend_from_slice(&headers);
+        frame.extend_from_slice(&body);
+        frame.extend_from_slice(&crc32fast::hash(&frame).to_be_bytes());
+        frame
+    }
+
+    #[tokio::test]
+    async fn upstream_denials_are_terminal_in_every_wire_format() {
+        let error = event(
+            "error",
+            json!({
+                "errorType":"AccessDeniedException", "error":"This client is not supported for this request."
+            }),
+        );
+        let start = event("messageStart", json!({"role":"assistant"}));
+        let late_content = event(
+            "contentBlockDelta",
+            json!({"contentBlockIndex":0,"delta":{"text":"must not appear"}}),
+        );
+        let binary = [
+            binary_frame("event", ":event-type", "bedrockStreamEvent", &start),
+            binary_frame("event", ":event-type", "bedrockStreamEvent", &error),
+            binary_frame("event", ":event-type", "bedrockStreamEvent", &late_content),
+        ]
+        .concat();
+        let cases = [
+            (
+                "application/x-ndjson",
+                format!("{start}\n{error}\n{late_content}\n").into_bytes(),
+            ),
+            (
+                "application/json",
+                json!([start, error, late_content]).to_string().into_bytes(),
+            ),
+            ("application/vnd.amazon.eventstream", binary),
+            (
+                "application/vnd.amazon.eventstream",
+                binary_frame(
+                    "exception",
+                    ":exception-type",
+                    "AccessDeniedException",
+                    &json!({"message":"This client is not supported for this request."}),
+                ),
+            ),
+        ];
+        for (content_type, body) in cases {
+            // Exercise arbitrary chunk boundaries without opening a socket.
+            let chunks: Vec<_> = body
+                .chunks(7)
+                .map(|b| Ok::<_, std::io::Error>(bytes::Bytes::copy_from_slice(b)))
+                .collect();
+            let response = axum::http::Response::builder()
+                .header("content-type", content_type)
+                .body(reqwest::Body::wrap_stream(futures_util::stream::iter(
+                    chunks,
+                )))
+                .unwrap()
+                .into();
+            let events: Vec<Value> = event_stream(response, "fixture".into()).collect().await;
+            let last = events.last().unwrap();
+            assert_eq!(last["type"], "error", "{content_type}: {events:?}");
+            assert_eq!(last["error"]["type"], "permission_error");
+            assert_eq!(last["error"]["code"], "AccessDeniedException");
+            assert!(
+                last["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("This client is not supported")
+            );
+            assert_eq!(events.iter().filter(|e| e["type"] == "error").count(), 1);
+            assert!(!events.iter().any(|e| e["type"] == "message_stop"));
+            assert!(
+                !events
+                    .iter()
+                    .any(|e| e.to_string().contains("must not appear"))
+            );
+        }
     }
     #[test]
     fn gpt_empty_blocks_do_not_create_blank_messages_or_index_gaps() {

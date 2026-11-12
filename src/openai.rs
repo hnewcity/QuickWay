@@ -630,11 +630,27 @@ impl ChatStream {
             }
             "error" => {
                 self.done = true;
-                vec![json!({"error":{"message":event["error"]["message"],"type":"server_error","param":null,"code":null}}).to_string()]
+                vec![json!({"error":stream_error(&event["error"])}).to_string()]
             }
             _ => Vec::new(),
         }
     }
+}
+
+fn stream_error(error: &Value) -> Value {
+    let (kind, fallback_code) = match error["type"].as_str() {
+        Some("permission_error") => ("permission_error", "permission_denied"),
+        Some("authentication_error") => ("invalid_request_error", "invalid_api_key"),
+        Some("invalid_request_error" | "not_found_error") => {
+            ("invalid_request_error", "invalid_request")
+        }
+        Some("rate_limit_error") => ("rate_limit_error", "rate_limit_exceeded"),
+        _ => ("server_error", "server_error"),
+    };
+    json!({
+        "message":error["message"], "type":kind, "param":null,
+        "code":error["code"].as_str().unwrap_or(fallback_code),
+    })
 }
 
 // ---------------------------------------------------------------- Responses
@@ -1447,8 +1463,8 @@ impl ResponsesStream {
             "error" => {
                 self.done = true;
                 let mut response = self.snapshot("failed", None);
-                response["error"] =
-                    json!({"code":"server_error","message":event["error"]["message"]});
+                let error = stream_error(&event["error"]);
+                response["error"] = json!({"code":error["code"],"message":error["message"]});
                 self.emit(&mut out, "response.failed", json!({"response":response}));
             }
             _ => {}

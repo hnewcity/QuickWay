@@ -7,6 +7,7 @@ use crate::{
     upstream::{self, Upstream},
 };
 use base64::Engine;
+use futures_util::StreamExt;
 use serde_json::{Map, Value, json};
 use std::time::{Duration, Instant};
 
@@ -54,6 +55,7 @@ pub async fn report(upstream: &Upstream, app_version: &str, online: bool) -> Val
         "app": {"version": app_version, "core": env!("CARGO_PKG_VERSION"), "os": std::env::consts::OS, "arch": std::env::consts::ARCH},
         "credential_source": source,
         "quick_profile": auth::profile_summary(base),
+        "inference": {"status":"not_checked"},
     });
 
     // The local credential is inspected even when an import is active, so a
@@ -156,6 +158,207 @@ pub async fn report(upstream: &Upstream, app_version: &str, online: bool) -> Val
     }
     report["recent_errors"] = upstream.recent_errors().into();
     report
+}
+
+/// An explicit, quota-consuming check. Its 30-second budget includes catalog
+/// resolution, sending, reading the complete stream and protocol validation.
+/// Never expose generated text in a diagnostics report.
+pub async fn probe_model(upstream: &Upstream, name: &str) -> Value {
+    let started = Instant::now();
+    let cloud_mode = crate::cloud::mode(name);
+    let mut result = tokio::time::timeout(Duration::from_secs(30), async {
+        if let Some(mode) = cloud_mode {
+            let outcome = crate::cloud::dispatch(upstream, inference_body(name, false), mode, Some("low")).await;
+            let mut result = match outcome {
+                Ok(crate::server::Outcome::Message(message)) => inspect_cloud_message(&message),
+                Ok(crate::server::Outcome::Stream(_)) => json!({"status":"failed","ok":false,"error":{
+                    "type":"api_error", "message":"Quick cloud diagnostic request unexpectedly returned an uncollected stream."
+                }}),
+                Err(failure) => {
+                    let error = crate::model_error::ModelError::from_upstream(
+                        upstream::error_kind(failure.status), &json!({"message":failure.message}));
+                    json!({"status":"failed","ok":false,"http_status":failure.status,"error":error.event()["error"]})
+                }
+            };
+            result["model"] = name.into();
+            result["transport"] = "quick_cloud".into();
+            return result;
+        }
+        let catalog = upstream.models(false).await;
+        let (model, route) = match catalog.resolve(name) {
+            Ok(resolved) => resolved,
+            Err(_) => return json!({"status":"failed","ok":false,"error":{
+                "type":"invalid_request_error", "message":"Requested model is not in the current Quick model directory. Query /v1/models or refresh the model catalog."
+            }}),
+        };
+        let payload = match inference_payload(&model, &route) {
+            Ok(payload) => payload,
+            Err(_) => return json!({"status":"failed","ok":false,"model":model,"error":{
+                "type":"invalid_request_error", "message":"Could not build the model diagnostic request."
+            }}),
+        };
+        let response = match upstream.post("/integration/quick-work/bedrock-proxy-stream", &payload).await {
+            Ok(response) => response,
+            Err(_) => return json!({"status":"failed","ok":false,"model":model,"error":{
+                "type":"api_error", "message":"Quick inference connection failed or no usable session is available."
+            }}),
+        };
+        let mut result = inspect_inference_response(response, &model).await;
+        result["model"] = model.into();
+        result
+    }).await.unwrap_or_else(|_| json!({"status":"timeout","ok":false,"error":{
+        "type":"api_error", "message":"Quick inference check exceeded its 30-second deadline."
+    }}));
+    if cloud_mode.is_some() {
+        // Dropping a timed-out dispatch does not stop its conversation task.
+        // Explicitly clean up temporary cloud devices on success and failure.
+        upstream.cloud.shutdown().await;
+        result["model"] = name.into();
+        result["transport"] = "quick_cloud".into();
+    }
+    result["elapsed_ms"] = (started.elapsed().as_millis() as u64).into();
+    result
+}
+
+fn inference_body(model: &str, stream: bool) -> Value {
+    json!({
+        "model":model,"stream":stream,"max_tokens":32,
+        "messages":[{"role":"user","content":"Reply OK."}]
+    })
+}
+
+fn inference_payload(model: &str, route: &str) -> Result<Value, String> {
+    let mut body = inference_body(model, true);
+    crate::thinking::Effort::Off.apply(&mut body, model)?;
+    let mut request = crate::converse::request(body, route)?;
+    request
+        .as_object_mut()
+        .expect("Converse request is an object")
+        .remove("modelId");
+    Ok(json!({"modelId":route,"requestBody":request}))
+}
+
+fn inspect_cloud_message(message: &Value) -> Value {
+    let has_text = message["content"].as_array().is_some_and(|blocks| {
+        blocks.iter().any(|block| {
+            block["type"] == "text"
+                && block["text"]
+                    .as_str()
+                    .is_some_and(|text| !text.trim().is_empty())
+        })
+    });
+    let has_usage = ["input_tokens", "output_tokens"]
+        .iter()
+        .all(|key| message["usage"][key].as_u64().is_some());
+    if message["type"] != "message"
+        || message["role"] != "assistant"
+        || message["stop_reason"] != "end_turn"
+        || !has_text
+        || !has_usage
+    {
+        return json!({"status":"failed","ok":false,"error":{
+            "type":"api_error", "message":"Quick cloud inference did not finish a complete text reply with token usage."
+        }});
+    }
+    let mut usage = Map::new();
+    for key in [
+        "input_tokens",
+        "output_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+    ] {
+        if let Some(value) = message["usage"][key].as_u64() {
+            usage.insert(key.into(), value.into());
+        }
+    }
+    let mut result =
+        json!({"status":"succeeded","ok":true,"completed":true,"received_text":true,"usage":usage});
+    // Only explicit backend identifiers are reportable; never copy an entire
+    // response object or arbitrary metadata into a diagnostics report.
+    let mut metadata = Map::new();
+    for key in ["mode", "resolved_model", "served_model"] {
+        if let Some(value) = message["quickway"][key].as_str().filter(|value| {
+            !value.is_empty()
+                && value.len() <= 512
+                && !value.contains("://")
+                && value
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._:/-".contains(&b))
+        }) {
+            metadata.insert(key.into(), value.into());
+        }
+    }
+    if !metadata.is_empty() {
+        result["quickway"] = metadata.into();
+    }
+    result
+}
+
+async fn inspect_inference_response(mut response: reqwest::Response, model: &str) -> Value {
+    let status = response.status().as_u16();
+    if !response.status().is_success() {
+        let (_, body, _) = upstream::error_body(response).await;
+        return json!({"status":"failed","ok":false,"http_status":status,"error":body["error"]});
+    }
+    let content_type = response.headers().get("content-type").cloned();
+    const MAX_RESPONSE: usize = 512 * 1024;
+    let mut bytes = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) if bytes.len() + chunk.len() <= MAX_RESPONSE => {
+                bytes.extend_from_slice(&chunk)
+            }
+            Ok(Some(_)) => {
+                return json!({"status":"failed","ok":false,"http_status":status,"error":{
+                    "type":"api_error", "message":"Quick inference response exceeded the 512 KiB diagnostic limit."
+                }});
+            }
+            Ok(None) => break,
+            Err(_) => {
+                return json!({"status":"failed","ok":false,"http_status":status,"error":{
+                    "type":"api_error", "message":"Quick inference stream disconnected before completion."
+                }});
+            }
+        }
+    }
+    // Reuse the production stream decoder after a bounded read. This accepts
+    // EventStream, NDJSON and JSON arrays and requires valid terminal metadata.
+    let mut response = axum::http::Response::builder();
+    if let Some(content_type) = content_type {
+        response = response.header("content-type", content_type);
+    }
+    let response = response.body(bytes).expect("valid bounded response").into();
+    let events = crate::streaming::event_stream(response, model.to_owned());
+    futures_util::pin_mut!(events);
+    let mut complete = false;
+    let mut has_text = false;
+    let mut natural_stop = false;
+    let mut usage = Value::Null;
+    while let Some(event) = events.next().await {
+        match event["type"].as_str() {
+            Some("error") => {
+                return json!({"status":"failed","ok":false,"http_status":status,"error":event["error"]});
+            }
+            Some("content_block_delta") => {
+                has_text |= event["delta"]["text"]
+                    .as_str()
+                    .is_some_and(|text| !text.trim().is_empty());
+            }
+            Some("message_delta") => {
+                natural_stop = event["delta"]["stop_reason"] == "end_turn";
+                usage = event["usage"].clone();
+            }
+            Some("message_stop") => complete = true,
+            _ => {}
+        }
+    }
+    if complete && natural_stop && has_text {
+        json!({"status":"succeeded","ok":true,"http_status":status,"completed":true,"received_text":true,"usage":usage})
+    } else {
+        json!({"status":"failed","ok":false,"http_status":status,"error":{
+            "type":"api_error", "message":"Quick inference did not finish a complete text reply within the diagnostic token limit."
+        }})
+    }
 }
 
 /// Summarize Quick's credential JSON: field names, expiries and token shapes.
@@ -431,6 +634,133 @@ fn type_name(value: &Value) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn model_stream(stop: &str) -> Vec<Value> {
+        vec![
+            json!({"eventType":"messageStart","payload":{"role":"assistant"}}),
+            json!({"eventType":"contentBlockDelta","payload":{"contentBlockIndex":0,"delta":{"text":"GENERATED-CONTENT-PRIVATE"}}}),
+            json!({"eventType":"contentBlockStop","payload":{"contentBlockIndex":0}}),
+            json!({"eventType":"messageStop","payload":{"stopReason":stop}}),
+            json!({"eventType":"metadata","payload":{"usage":{"inputTokens":6,"outputTokens":1}}}),
+        ]
+    }
+
+    fn model_response(body: Value) -> reqwest::Response {
+        axum::http::Response::builder()
+            .header("content-type", "application/json")
+            .body(body.to_string())
+            .unwrap()
+            .into()
+    }
+
+    #[tokio::test]
+    async fn inference_probe_reports_completion_and_usage_without_generated_content() {
+        let result =
+            inspect_inference_response(model_response(json!(model_stream("end_turn"))), "fixture")
+                .await;
+        assert_eq!(result["status"], "succeeded");
+        assert_eq!(result["completed"], true);
+        assert_eq!(result["usage"]["output_tokens"], 1);
+        assert!(!result.to_string().contains("GENERATED-CONTENT-PRIVATE"));
+    }
+
+    #[test]
+    fn cloud_probe_reports_usage_and_backend_without_generated_content() {
+        let message = json!({
+            "id":"PRIVATE-RESPONSE-ID", "type":"message", "role":"assistant", "stop_reason":"end_turn",
+            "content":[{"type":"text","text":"GENERATED-CONTENT-PRIVATE"}],
+            "usage":{"input_tokens":4,"output_tokens":2,"cache_read_input_tokens":1,"private":"PRIVATE-USAGE"},
+            "quickway":{"mode":"smart","resolved_model":"us.anthropic.claude-opus-5-5",
+                "served_model":"https://private.example/token","private":"PRIVATE-METADATA"}
+        });
+        let result = inspect_cloud_message(&message);
+        assert_eq!(result["status"], "succeeded");
+        assert_eq!(
+            result["usage"],
+            json!({"input_tokens":4,"output_tokens":2,"cache_read_input_tokens":1})
+        );
+        assert_eq!(
+            result["quickway"],
+            json!({"mode":"smart","resolved_model":"us.anthropic.claude-opus-5-5"})
+        );
+        assert!(!result.to_string().contains("PRIVATE"));
+        assert!(!result.to_string().contains("private.example"));
+        for (key, value) in [
+            ("stop_reason", json!("tool_use")),
+            ("usage", json!({"input_tokens":4})),
+            ("content", json!([])),
+        ] {
+            let mut partial = message.clone();
+            partial[key] = value;
+            let result = inspect_cloud_message(&partial);
+            assert_eq!(result["status"], "failed");
+            assert!(!result.to_string().contains("PRIVATE"));
+        }
+    }
+
+    #[test]
+    fn cloud_probe_uses_a_non_streaming_synthetic_request() {
+        for mode in ["fast", "balanced", "smart", "advanced"] {
+            let body = inference_body(&format!("quick-{mode}"), false);
+            let request =
+                crate::cloud_request::ValidatedRequest::from_body(body, mode, Some("low")).unwrap();
+            assert_eq!(request.body["stream"], false);
+            assert_eq!(request.turn.text, "Reply OK.");
+            assert_eq!(request.requested_max_tokens, Some(32));
+            assert_eq!(request.thinking_effort, "low");
+            assert!(request.tools.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn inference_probe_rejects_truncation_token_limits_and_http_200_errors() {
+        let mut missing_metadata = model_stream("end_turn");
+        missing_metadata.pop();
+        let mut interrupted = model_stream("end_turn");
+        interrupted.truncate(2);
+        for stream in [missing_metadata, interrupted, model_stream("max_tokens")] {
+            let result = inspect_inference_response(model_response(json!(stream)), "fixture").await;
+            assert_eq!(result["status"], "failed");
+            assert_eq!(result["ok"], false);
+            assert!(!result.to_string().contains("GENERATED-CONTENT-PRIVATE"));
+        }
+        let denial = json!({"eventType":"error","payload":{
+            "errorType":"AccessDeniedException","error":"This client is not supported for this request."
+        }});
+        let result = inspect_inference_response(model_response(denial), "fixture").await;
+        assert_eq!(result["http_status"], 200);
+        assert_eq!(result["status"], "failed");
+        assert_eq!(result["error"]["type"], "permission_error");
+        assert_eq!(result["error"]["code"], "AccessDeniedException");
+    }
+
+    #[tokio::test]
+    async fn inference_probe_bounds_success_status_bodies() {
+        let response = model_response(json!({"large":"PRIVATE".repeat(100_000)}));
+        let result = inspect_inference_response(response, "fixture").await;
+        assert_eq!(result["status"], "failed");
+        assert!(
+            result["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("512 KiB")
+        );
+        assert!(!result.to_string().contains("PRIVATE"));
+    }
+
+    #[test]
+    fn inference_probe_keeps_a_small_shared_converse_request() {
+        for (model, route) in [
+            ("claude-sonnet-4-6", "global.anthropic.claude-sonnet-4-6"),
+            ("gpt-6-astra", "us.openai.gpt-6-astra"),
+        ] {
+            let payload = inference_payload(model, route).unwrap();
+            assert_eq!(payload["modelId"], route);
+            assert_eq!(payload["requestBody"]["inferenceConfig"]["maxTokens"], 32);
+            assert!(payload["requestBody"].get("modelId").is_none());
+            assert!(payload["requestBody"].get("toolConfig").is_none());
+        }
+    }
 
     fn jwt(claims: Value) -> String {
         let encode =

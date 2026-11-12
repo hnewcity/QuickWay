@@ -42,10 +42,10 @@ QuickWay 是一个桌面网关，通过本机的 Anthropic 兼容和 OpenAI 兼�
 | 🔌 **Anthropic 兼容 API** | `/v1/messages` 端点，支持 Anthropic SDK 和 Claude Code |
 | 🔌 **OpenAI 兼容 API** | `/v1/chat/completions` 和 `/v1/responses` 端点，支持 OpenAI SDK 和 Codex |
 | 🚀 **编程启动器** | 一键在独立终端中启动 Claude Code 或 Codex，各自记住模型和思考强度 |
-| 🧠 **思考强度** | 关闭 / 低 / 中 / 高，对应各模型原生的推理参数 |
-| 📋 **动态模型目录** | 模型直接来自你的 Quick 账号，并自动刷新 |
+| 🧠 **思考强度** | 云端模式使用强度提示，旧模型通道使用原生推理参数 |
+| 📋 **云端档位** | 选择 Fast、Balanced、Smart 或 Advanced，并查看每次响应实际使用的模型 |
 | 🛠️ **工具调用** | Messages、Chat Completions 和 Responses 均支持函数调用 |
-| 👁️ **视觉支持** | 向模型发送 base64 图片 |
+| 👁️ **视觉支持** | 支持图片的旧模型通道可接收 base64 图片；云端模式目前支持文本和工具 |
 | 📡 **流式传输** | 完整 SSE 流式支持 |
 | 💬 **内置聊天** | 用内置聊天界面测试你的配置 |
 | 🔐 **本机运行，凭据安全** | 代理仅监听本机，使用独立的 API 密钥；令牌只存在内存中，来自 Windows 凭据管理器或 macOS 钥匙串 |
@@ -92,10 +92,31 @@ npm run desktop:build
 
 1. 在这台电脑上**登录** Amazon Quick
 2. **启动** QuickWay，它会自动读取已登录的账号
-3. **打开**「编程」页，选择 Claude Code 或 Codex、模型和项目文件夹，然后点击启动
+3. **打开**「编程」页，选择 Claude Code 或 Codex、推荐的 `quick-smart` 模式和项目文件夹，然后点击启动
 4. **或者**把 `http://127.0.0.1:8741` 作为 Anthropic / OpenAI API 地址，API 密钥在「连接设置」中查看
 
-> 模型 ID 来自你的账号，请使用 `GET /v1/models` 返回的 ID。
+请使用 `GET /v1/models` 返回的 ID。桌面端首次使用默认选择 `quick-smart`，已有的模型选择会保留。
+
+### Quick 云端模式
+
+| API 模型 ID | Quick 智能体模式 |
+|---|---|
+| `quick-fast` | `fast` |
+| `quick-balanced` | `balanced` |
+| `quick-smart` | `smart`（推荐默认值） |
+| `quick-advanced` | `advanced` |
+
+这些 ID 选择的是 Quick 云端智能体模式，具体模型由 Quick 调度。目前云端通道支持 social/AIDP 登录，不支持 enterprise/gateway 登录。
+
+旧的固定模型通道可能返回 `AccessDeniedException: This client is not supported for this request.`。登录成功或成功获取模型目录，不代表推理请求可用。API 目录仍保留固定型号，桌面选择器仅展示云端档位；已有固定型号选择需要手动重新选择档位。
+
+聊天回复会保存服务端返回的实际型号。概览和编程页还会显示当前账号通过本地代理完成的最近一次云端响应型号，包括 Claude Code、Codex 和 API 客户端的请求。缺少型号信息时显示未知，选择档位不代表锁定某个模型版本。
+
+云端对话使用有状态连接，在当前 QuickWay 进程内最多缓存 10 分钟的闲置连接。重启、缓存过期或连接被回收后，QuickWay 可以根据已完成且受支持的历史重建云端会话：包括文本消息，以及已配对完成的工具调用和结果，支持多个文本结果块及工具错误状态。原会话仍保留时，正常的多轮工具调用可以直接续接。
+
+仍在等待工具结果的会话需要原进程和原连接。历史重建会拒绝未配对的工具调用/结果、工具调用之后仍有非空文本的 assistant 消息、先出现文本再出现工具结果的 user 消息、图片/文档，以及带签名的思考块。如果这类会话的原连接已不可用，请新建对话。
+
+生成长度和推理限额由 Quick 云端控制。`max_tokens` 仅保留用于诊断，不是上游强制上限；思考 token 预算会转换成强度提示。「关闭」也不能保证禁用云端推理。目前云端模式支持文本和工具调用，明确拒绝不支持的采样参数（`temperature`、`top_p`、`top_k`）、图片、文档、强制工具选择和结构化输出。
 
 ### 示例：cURL
 
@@ -104,7 +125,7 @@ curl http://127.0.0.1:8741/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_PROXY_API_KEY" \
   -d '{
-    "model": "claude-sonnet-4-6",
+    "model": "quick-smart",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```
@@ -120,7 +141,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="claude-sonnet-4-6",
+    model="quick-smart",
     messages=[{"role": "user", "content": "Hello!"}]
 )
 print(response.choices[0].message.content)
@@ -137,7 +158,7 @@ const client = new OpenAI({
 });
 
 const response = await client.chat.completions.create({
-  model: 'claude-sonnet-4-6',
+  model: 'quick-smart',
   messages: [{ role: 'user', content: 'Hello!' }],
 });
 console.log(response.choices[0].message.content);
@@ -174,8 +195,14 @@ console.log(response.choices[0].message.content);
 | 选项 | 描述 |
 |---|---|
 | 思考强度 | 每个对话或每次启动可选 关闭 / 低 / 中 / 高，也可用 `x-quickway-thinking-effort` 请求头指定 |
-| 模型目录 | 每 5 分钟刷新一次，也可在聊天工具栏手动刷新 |
+| 云端档位 | 每 5 分钟刷新一次，也可在聊天工具栏手动刷新 |
 | 随应用启动 | QuickWay 打开时自动启动代理 |
+
+### 诊断
+
+`quickway doctor --online` 检查登录、账号访问和模型目录，不会生成回复。报告中的推理状态为 `not_checked`；目录可用不代表模型请求可用。
+
+运行 `quickway doctor --probe-model quick-smart` 会额外发送一次模型请求，也可选择 `/v1/models` 中的其他 ID。探针请求简短回复并设置 `max_tokens: 32`，超时时间为 30 秒；云端模式不保证该 token 上限。此操作会消耗模型额度，报告仅包含完成状态或上游错误，不包含生成的内容。
 
 ## 🛠️ 技术栈
 

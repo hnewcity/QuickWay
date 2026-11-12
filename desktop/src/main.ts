@@ -14,11 +14,11 @@ type Model = { id: string; name: string; family: string; upstream: string };
 type ThinkingEffort = 'off' | 'low' | 'medium' | 'high';
 type Preferences = { port: number; model: string; projectDir: string; autoStart: boolean; thinkingEffort: ThinkingEffort; codexModel: string; codexEffort: ThinkingEffort };
 type ModelCatalog = { source: 'cloud' | 'cache' | 'unavailable'; lastUpdated: number | null; error: string | null };
-type Status = { preferences: Preferences; running: boolean; account: { signedIn: boolean; canRefresh: boolean; error: string | null; expiresAt?: number; enterprise?: boolean }; credentials?: { source: 'local' | 'imported' }; models: Model[]; modelCatalog: ModelCatalog; claudeInstalled: boolean; codexInstalled: boolean; version: string };
+type Status = { preferences: Preferences; running: boolean; account: { signedIn: boolean; canRefresh: boolean; error: string | null; expiresAt?: number; enterprise?: boolean }; credentials?: { source: 'local' | 'imported' }; models: Model[]; modelCatalog: ModelCatalog; lastCloudModel?: { mode: string; servedModel: string | null; at: number } | null; claudeInstalled: boolean; codexInstalled: boolean; version: string };
 type Usage = { monthlyUsage?: { availableUnits?: number; provisionedUnits?: number; usedPercentage?: number }; sessionUsage?: { usedPercentage?: number }; subscription?: { subscriptionType?: string; freeTrialMetadata?: { expiryDate?: number } } };
-type Message = { id: string; role: 'user' | 'assistant'; content: string; model?: string; thinkingEffort?: ThinkingEffort; error?: string; interrupted?: boolean; input?: number; output?: number };
+type Message = { id: string; role: 'user' | 'assistant'; content: string; model?: string; servedModel?: string; thinkingEffort?: ThinkingEffort; error?: string; interrupted?: boolean; input?: number; output?: number };
 type Conversation = { id: string; title: string; model: string; thinkingEffort?: ThinkingEffort; messages: Message[]; updated: number };
-type ChatEvent = { type: 'delta'; text: string } | { type: 'usage'; input: number; output: number } | { type: 'done'; reason: string } | { type: 'cancelled' } | { type: 'error'; message: string };
+type ChatEvent = { type: 'delta'; text: string } | { type: 'model'; served: string } | { type: 'usage'; input: number; output: number } | { type: 'done'; reason: string } | { type: 'cancelled' } | { type: 'error'; message: string };
 
 const isMac = /Mac/.test(navigator.platform);
 // Matches the native window configs: macOS overlays its traffic lights, Windows has no system frame.
@@ -85,18 +85,39 @@ let draft = '';
 let pendingPreferences: Promise<void> = Promise.resolve();
 let toastTimer: ReturnType<typeof setTimeout>;
 const current = () => conversations.find(c => c.id === selected);
-const hasSelectedModel = () => !!status?.models.some(m => m.id === status!.preferences.model);
+const hasSelectedModel = () => availableModels().some(m => m.id === status?.preferences.model);
 // Codex keeps its own model; an empty choice follows the shared default.
 const codexModel = () => status!.preferences.codexModel || status!.preferences.model;
-const hasCodexModel = () => !!status?.models.some(m => m.id === codexModel());
+const hasCodexModel = () => availableModels().some(m => m.id === codexModel());
 const codexReady = () => !!status?.codexInstalled && !!status.preferences.projectDir && hasCodexModel();
 const claudeReady = () => !!status?.claudeInstalled && !!status.preferences.projectDir && hasSelectedModel();
 // The Coding page launches one tool at a time; the last pick is remembered across restarts.
 type CodingTool = 'claude' | 'codex';
 let codingTool: CodingTool = localStorage.getItem('quickway.codingTool') === 'codex' ? 'codex' : 'claude';
-const modelFamilies = () => [...new Set(status!.models.map(m => m.family))];
-const modelMark = (id: string) => { const family = status?.models.find(m => m.id === id)?.family; return family === 'OpenAI' ? '◎' : family === 'Anthropic' ? 'A' : '◇'; };
-const modelName = (id?: string) => status?.models.find(m => m.id === id)?.name || id || 'QuickWay';
+const tierKeys: Record<string, MessageKey> = { 'quick-fast': 'tierFast', 'quick-balanced': 'tierBalanced', 'quick-smart': 'tierSmart', 'quick-advanced': 'tierAdvanced' };
+const availableModels = () => Object.keys(tierKeys).flatMap(id => status?.models.find(m => m.id === id) || []);
+const modelName = (id?: string) => id && Object.hasOwn(tierKeys, id) ? t(tierKeys[id]) : t('chooseModel');
+const modelMark = (_id: string) => '◇';
+const validServedModel = (id: unknown): id is string => typeof id === 'string' && id.length > 0 && id.length <= 512 && /^[a-zA-Z0-9._:/-]+$/.test(id) && !id.includes('://');
+function servedModelName(id: string) {
+  const short = id.replace(/^(?:(?:us|eu|apac|global)\.)?(?:anthropic|openai)\./, '');
+  const claude = short.match(/^claude-(haiku|sonnet|opus|fable)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?(?:-v\d+(?::\d+)?)?$/);
+  if (claude) return `Claude ${claude[1][0].toUpperCase()}${claude[1].slice(1)} ${claude[2]}${claude[3] ? `.${claude[3]}` : ''}`;
+  const gpt = short.match(/^gpt-(\d+(?:\.\d+)?)-(astra|luna|terra|sol)$/);
+  return gpt ? `GPT-${gpt[1]} ${gpt[2][0].toUpperCase()}${gpt[2].slice(1)}` : id;
+}
+function actualModelHtml(message?: Message) {
+  const served = message?.servedModel;
+  const pending = !!activeRequest && message === current()?.messages.at(-1);
+  const label = validServedModel(served) ? servedModelName(served) : t(pending ? 'actualModelPending' : message ? 'actualModelUnknown' : 'actualModelIdle');
+  return `<span class="actual-model" title="${escape(validServedModel(served) ? served : '')}"><span>${t('actualModel')}</span> ${escape(label)}</span>`;
+}
+function recentModelHtml() {
+  const recent = status?.lastCloudModel;
+  const served = recent?.servedModel;
+  const label = validServedModel(served) ? servedModelName(served) : t(recent ? 'actualModelUnknown' : 'actualModelIdle');
+  return `<span>${t('recentModel')}</span><strong title="${escape(validServedModel(served) ? served : '')}">${escape(label)}</strong>${recent ? `<small>${escape(modelName(`quick-${recent.mode}`))} · ${escape(new Date(recent.at * 1000).toLocaleTimeString(locale()))}</small>` : ''}`;
+}
 
 function toast(text: string, error = false) {
   const target = el('toast')!;
@@ -213,6 +234,7 @@ function chrome() {
   document.querySelectorAll<HTMLElement>('[data-model-summary]').forEach(e => { e.textContent = catalogSummary(); e.title = status!.modelCatalog?.error || t('catalogAutoUpdate'); });
   document.querySelectorAll<HTMLButtonElement>('[data-authorize-quick]').forEach(e => { e.disabled = authorizing; });
   document.querySelectorAll<HTMLButtonElement>('[data-refresh-models]').forEach(e => { e.disabled = refreshingModels; });
+  document.querySelectorAll<HTMLElement>('[data-recent-model]').forEach(e => { const content = recentModelHtml(); if (e.innerHTML !== content) e.innerHTML = content; });
   const launch = el<HTMLButtonElement>('launch-claude');
   if (launch) launch.disabled = !claudeReady();
   const launchCodex = el<HTMLButtonElement>('launch-codex');
@@ -220,7 +242,7 @@ function chrome() {
   document.querySelectorAll<HTMLButtonElement>('[data-import-ccswitch], [data-copy-example], [data-copy-connection]').forEach(e => { e.disabled = !hasSelectedModel(); });
   document.querySelectorAll<HTMLElement>('[data-proxy-label]').forEach(e => e.textContent = t(status!.running ? 'running' : 'stopped'));
   document.querySelectorAll<HTMLElement>('[data-proxy-state]').forEach(e => e.classList.toggle('is-running', status!.running));
-  document.querySelectorAll<HTMLElement>('[data-model-count]').forEach(e => e.textContent = String(status!.models.length));
+  document.querySelectorAll<HTMLElement>('[data-model-count]').forEach(e => e.textContent = String(availableModels().length));
   document.querySelectorAll<HTMLButtonElement>('[data-toggle-proxy]').forEach(e => {
     const label = t(status!.running ? 'stopProxy' : 'startProxy');
     // Preserve the pressed DOM node during a port save or periodic refresh.
@@ -234,7 +256,7 @@ function loginNotice() {
 
 function catalogSummary() {
   const source = status?.modelCatalog?.source;
-  return t('catalogSummary', { count: status?.models.length || 0, state: t(refreshingModels ? 'catalogRefreshing' : source === 'cloud' ? 'catalogSynced' : source === 'cache' ? 'catalogCache' : 'catalogNone') });
+  return t('catalogSummary', { count: availableModels().length, state: t(refreshingModels ? 'catalogRefreshing' : source === 'cloud' ? 'catalogSynced' : source === 'cache' ? 'catalogCache' : 'catalogNone') });
 }
 // Model and thinking effort share one picker: a pill that opens a single popover with the effort levels
 // on top and the model list below, so both choices are one click away.
@@ -259,9 +281,9 @@ function pickerSource(scope: PickerScope): PickerValue {
   const conversation = scope === 'chat' ? current() : undefined;
   return { model: conversation?.model || prefs.model, effort: effortValue(conversation ? conversation.thinkingEffort : prefs.thinkingEffort) };
 }
-const isKnownModel = (id: string) => status!.models.some(m => m.id === id);
-const pickedModelName = (id: string) => isKnownModel(id) ? modelName(id) : id ? t('modelUnavailableName', { name: modelName(id) }) : t('chooseModel');
-const missingModelText = (id: string) => id ? t('modelNotInCatalog', { name: modelName(id) }) : t(status!.models.length ? 'pickCloudModel' : 'noCloudModels');
+const isKnownModel = (id: string) => availableModels().some(m => m.id === id);
+const pickedModelName = (id: string) => isKnownModel(id) ? modelName(id) : Object.hasOwn(tierKeys, id) ? t('modelUnavailableName', { name: modelName(id) }) : t('chooseModel');
+const missingModelText = (id: string) => Object.hasOwn(tierKeys, id) ? t('modelNotInCatalog', { name: modelName(id) }) : t(availableModels().length ? 'pickCloudModel' : 'noCloudModels');
 
 function triggerHtml(scope: PickerScope) {
   const { model, effort } = pickerValues[scope]!;
@@ -275,11 +297,11 @@ function pickerHtml(scope: PickerScope) {
 function popHtml(scope: PickerScope) {
   const { model, effort } = pickerValues[scope]!;
   const missing = isKnownModel(model) ? '' : `<div class="mode-option mode-missing" role="option" aria-selected="true" aria-disabled="true"><span class="mode-option-name">${escape(missingModelText(model))}</span></div>`;
-  const groups = modelFamilies().map(family => `<div class="mode-family" role="group" aria-label="${escape(family)}"><span class="mode-family-name">${escape(family)}</span>${status!.models.filter(m => m.family === family).map(m => `<button type="button" class="mode-option" role="option" aria-selected="${m.id === model}" data-model-option="${escape(m.id)}"><span class="model-mark">${modelMark(m.id)}</span><span class="mode-option-name">${escape(m.name)}</span>${m.id === model ? icon('check') : ''}</button>`).join('')}</div>`).join('');
+  const groups = `<div class="mode-family" role="group" aria-label="Amazon Quick">${availableModels().map(m => `<button type="button" class="mode-option" role="option" aria-selected="${m.id === model}" data-model-option="${escape(m.id)}"><span class="model-mark">${modelMark(m.id)}</span><span class="mode-option-name">${escape(modelName(m.id))}</span>${m.id === model ? icon('check') : ''}</button>`).join('')}</div>`;
   return `<section class="mode-section"><div class="mode-section-head"><span class="eyebrow">${t('thinkingEffort')}</span></div>
     <div class="effort-choice" id="${scope}-effort" role="radiogroup" aria-label="${t('thinkingEffort')}" data-value="${effort}">${efforts.map(key => `<button type="button" role="radio" id="${scope}-effort-${key}" class="level-${key}" aria-checked="${key === effort}" tabindex="${key === effort ? 0 : -1}" data-effort-stop="${key}">${key === 'off' ? t('effortOffShort') : effortName(key)}</button>`).join('')}</div>
     <p class="mode-hint">${t(effortHintKeys[effort])}</p></section>
-    <section class="mode-section mode-model-section"><div class="mode-section-head"><span class="eyebrow">${t('model')}</span><span class="mode-count">${t('modelCountShort', { count: status!.models.length })}</span></div><div class="mode-models" role="listbox" aria-label="${t('model')}">${missing}${groups}</div></section>`;
+    <section class="mode-section mode-model-section"><div class="mode-section-head"><span class="eyebrow">${t('model')}</span><span class="mode-count">${t('modelCountShort', { count: availableModels().length })}</span></div><div class="mode-models" role="listbox" aria-label="${t('model')}">${missing}${groups}</div></section>`;
 }
 function syncPicker(scope: PickerScope) {
   const trigger = el<HTMLButtonElement>(`${scope}-picker`);
@@ -369,7 +391,7 @@ document.addEventListener('keydown', e => {
 function messageHtml(message: Message) {
   const assistant = message.role === 'assistant';
   const content = assistant ? DOMPurify.sanitize(marked.parse(message.content, { async: false }), { FORBID_TAGS: ['style', 'iframe', 'form', 'input', 'button'], FORBID_ATTR: ['style'] }) : escape(message.content);
-  return `<article class="message ${assistant ? 'assistant' : 'user'}" id="message-${message.id}"><div class="message-avatar">${assistant ? brand : escape(t('you'))}</div><div class="message-main"><div class="message-author">${assistant ? escape(modelName(message.model)) : escape(t('you'))}${assistant ? '<span class="author-tag">Quick</span>' : ''}${assistant && message.thinkingEffort ? `<span class="author-tag effort-badge">Thinking ${effortLabels[effortValue(message.thinkingEffort)]}</span>` : ''}</div><div class="message-content ${assistant ? 'markdown' : ''}">${content || (assistant && activeRequest ? `<span class="thinking-label">${message.thinkingEffort && message.thinkingEffort !== 'off' ? t('thinking') : ''}<span class="typing"><i></i><i></i><i></i></span></span>` : '')}</div><div class="message-error">${escape(message.error || '')}</div><div class="message-footer">${assistant && message.content ? `<button class="subtle-icon" data-copy-message="${message.id}" title="${t('copyReply')}" aria-label="${t('copyReply')}">${icon('copy')}</button>` : ''}<span>${message.interrupted ? t('generationStopped') : message.output !== undefined ? t('tokenUsage', { input: fmt(message.input), output: fmt(message.output) }) : ''}</span></div></div></article>`;
+  return `<article class="message ${assistant ? 'assistant' : 'user'}" id="message-${message.id}"><div class="message-avatar">${assistant ? brand : escape(t('you'))}</div><div class="message-main"><div class="message-author">${assistant ? escape(modelName(message.model)) : escape(t('you'))}${assistant ? '<span class="author-tag">Quick</span>' : ''}${assistant && message.thinkingEffort ? `<span class="author-tag effort-badge">Thinking ${effortLabels[effortValue(message.thinkingEffort)]}</span>` : ''}</div>${assistant ? actualModelHtml(message) : ''}<div class="message-content ${assistant ? 'markdown' : ''}">${content || (assistant && activeRequest ? `<span class="thinking-label">${message.thinkingEffort && message.thinkingEffort !== 'off' ? t('thinking') : ''}<span class="typing"><i></i><i></i><i></i></span></span>` : '')}</div><div class="message-error">${escape(message.error || '')}</div><div class="message-footer">${assistant && message.content ? `<button class="subtle-icon" data-copy-message="${message.id}" title="${t('copyReply')}" aria-label="${t('copyReply')}">${icon('copy')}</button>` : ''}<span>${message.interrupted ? t('generationStopped') : message.output !== undefined ? t('tokenUsage', { input: fmt(message.input), output: fmt(message.output) }) : ''}</span></div></div></article>`;
 }
 
 function renderChat() {
@@ -380,7 +402,7 @@ function renderChat() {
   el('workspace')!.innerHTML = `<div class="chat-view ${hasMessages ? '' : 'is-empty'}">
     <header class="chat-header"${headerDrag}><h1 class="chat-title">${escape(conversation?.title || t('newChat'))}</h1><div class="chat-tools"><span class="chat-toolbar-note" data-model-summary>${escape(catalogSummary())}</span><button class="icon-button" data-refresh-models title="${t('refreshModels')}" aria-label="${t('refreshModels')}">${icon('refresh')}</button><button class="icon-button" id="copy-chat" title="${t('copyChat')}" aria-label="${t('copyChat')}" ${!hasMessages ? 'disabled' : ''}>${icon('copy')}</button></div></header>
     <div class="chat-scroll" id="chat-scroll">${hasMessages ? `<div class="messages" id="messages">${conversation.messages.map(messageHtml).join('')}</div>` : `<div class="welcome"><div class="crowd" id="crowd" aria-hidden="true"></div><section class="hero-island"><div class="hero-emblem">${brand}</div><h1>${t('heroTitle')}</h1><p>${t('heroBody')}</p><div class="suggestions">${suggestion('blue', 'spark', 'Explain')}${suggestion('yellow', 'bot', 'Review')}${suggestion('pink', 'folder', 'Plan')}${suggestion('peach', 'bubble', 'Polish')}</div></section></div>`}</div>
-    <div class="composer-area"><div class="login-notice" id="login-notice" ${status!.account.signedIn ? 'hidden style="display:none"' : ''}>${status!.account.signedIn ? '' : loginNotice()}</div><form class="composer" id="chat-form"><textarea id="prompt" rows="1" maxlength="60000" placeholder="${t('composerPlaceholder')}" aria-label="${t('messageInput')}">${escape(draft)}</textarea><div class="composer-bottom"><div class="composer-tools">${pickerHtml('chat')}</div><button class="send-button ${activeRequest ? 'stopping' : ''}" id="send" type="${activeRequest ? 'button' : 'submit'}" aria-label="${t(activeRequest ? 'stopGenerating' : 'sendMessage')}" title="${t(activeRequest ? 'stopGenerating' : 'sendMessage')}">${icon(activeRequest ? 'stop' : 'send')}</button></div></form></div>
+    <div class="composer-area"><div class="chat-model-status" id="chat-model-status" role="status">${actualModelHtml(conversation?.messages.filter(m => m.role === 'assistant').at(-1))}</div><div class="login-notice" id="login-notice" ${status!.account.signedIn ? 'hidden style="display:none"' : ''}>${status!.account.signedIn ? '' : loginNotice()}</div><form class="composer" id="chat-form"><textarea id="prompt" rows="1" maxlength="60000" placeholder="${t('composerPlaceholder')}" aria-label="${t('messageInput')}">${escape(draft)}</textarea><div class="composer-bottom"><div class="composer-tools">${pickerHtml('chat')}</div><button class="send-button ${activeRequest ? 'stopping' : ''}" id="send" type="${activeRequest ? 'button' : 'submit'}" aria-label="${t(activeRequest ? 'stopGenerating' : 'sendMessage')}" title="${t(activeRequest ? 'stopGenerating' : 'sendMessage')}">${icon(activeRequest ? 'stop' : 'send')}</button></div></form></div>
     </div>`;
   const crowd = el('crowd');
   if (crowd) { drawCrowd(crowd); crowdObserver.observe(crowd); }
@@ -412,7 +434,7 @@ function renderCode() {
     <header class="page-header"${headerDrag}><div><span class="eyebrow">Claude Code · Codex</span><h1>${t('codeHeading')}</h1><p>${t('codeIntro')}</p></div>${figure('bot', 'header-figure')}</header>
     <div class="split">
       <section class="scene launch-panel"><div class="panel-title"><h2>${t('startCoding')}</h2><span class="badge ${installed ? 'on' : 'warn'}">${t(installed ? tool.detected : tool.missing)}</span></div>
-        <span class="field-label">${t('codingTool')}</span><div class="segmented tool-switch" role="group" aria-label="${t('codingTool')}">${toolTab('claude')}${toolTab('codex')}</div>
+        <div class="recent-model coding-recent-model" data-recent-model role="status">${recentModelHtml()}</div><span class="field-label">${t('codingTool')}</span><div class="segmented tool-switch" role="group" aria-label="${t('codingTool')}">${toolTab('claude')}${toolTab('codex')}</div>
         <span class="field-label">${t('modelAndEffort')}</span>${pickerHtml(codingTool)}<p class="field-help claude-effort-help">${t(tool.effortHelp)}</p>
         <label class="field-label" for="project-path">${t('projectFolder')}</label><div class="path-field"><span>${icon('folder')}</span><input id="project-path" readonly value="${escape(prefs.projectDir)}" placeholder="${t('projectPlaceholder')}"><button class="pill pill-outline pill-small" id="pick-folder">${t('chooseFolder')}</button></div>
         <div class="launch-row"><button class="pill pill-ink launch-button" id="launch-${codingTool}" ${tool.ready() ? '' : 'disabled'}>${icon(tool.icon)}${t(tool.launch)}${icon('arrow')}</button><p class="field-help">${t('launchHelp')}</p></div>
@@ -597,7 +619,7 @@ function apiCardHtml() {
   const tab = (attr: string, value: string, label: string, active: boolean) => `<button class="${active ? 'active' : ''}" ${attr}="${value}" aria-pressed="${active}">${label}</button>`;
   const shownKey = revealKey && apiKey ? apiKey : maskedKey;
   return `<div class="api-head"><h2>${t('apiExamples')}</h2><div class="segmented" role="group" aria-label="${t('apiFormat')}">${tab('data-api-format', 'openai', 'OpenAI', apiFormat === 'openai')}${tab('data-api-format', 'anthropic', 'Anthropic', apiFormat === 'anthropic')}</div></div>
-    <dl class="api-meta"><div><dt>Base URL</dt><dd><code>${escape(baseUrl())}${apiFormat === 'openai' ? '/v1' : ''}</code></dd></div><div><dt>${t('model')}</dt><dd><code>${escape(status!.preferences.model || t('notSelected'))}</code></dd></div></dl>
+    <dl class="api-meta"><div><dt>Base URL</dt><dd><code>${escape(baseUrl())}${apiFormat === 'openai' ? '/v1' : ''}</code></dd></div><div><dt>${t('model')}</dt><dd><code>${escape(hasSelectedModel() ? status!.preferences.model : t('notSelected'))}</code></dd></div></dl>
     <div class="api-tools"><div class="lang-tabs" role="group" aria-label="${t('exampleLanguage')}">${tab('data-api-language', 'shell', shellLabel, apiLanguage === 'shell')}${tab('data-api-language', 'python', 'Python', apiLanguage === 'python')}${tab('data-api-language', 'javascript', 'JavaScript', apiLanguage === 'javascript')}</div><button class="text-button key-toggle" data-reveal-key>${icon(revealKey ? 'eyeOff' : 'eye')}${t(revealKey ? 'hideKey' : 'showKey')}</button><button class="pill pill-outline pill-small" data-copy-example ${hasSelectedModel() ? '' : 'disabled'}>${icon('copy')}${t('copy')}</button></div>
     <pre class="code-block" id="api-code"><code>${escape(apiExample(apiFormat, apiLanguage, shownKey))}</code></pre>
     <p class="field-help">${t('apiHelp')}</p>`;
@@ -607,17 +629,14 @@ function ccSwitchHtml() {
   const shownKey = revealKey && apiKey ? apiKey : maskedKey;
   return `<div class="ccswitch-top">${figure('plug', 'ccswitch-figure')}<div><span class="eyebrow">CC Switch</span><h2>${t('ccTitle')}</h2></div></div>
     <p class="ccswitch-copy">${t('ccBody')}</p>
-    <dl class="import-preview"><div><dt>${t('ccProvider')}</dt><dd>QuickWay</dd></div><div><dt>${t('ccAddress')}</dt><dd>${escape(baseUrl())}</dd></div><div><dt>${t('apiKey')}</dt><dd>${escape(shownKey)}</dd></div><div><dt>${t('defaultModel')}</dt><dd>${escape(status!.preferences.model || t('notSelected'))}</dd></div></dl>
+    <dl class="import-preview"><div><dt>${t('ccProvider')}</dt><dd>QuickWay</dd></div><div><dt>${t('ccAddress')}</dt><dd>${escape(baseUrl())}</dd></div><div><dt>${t('apiKey')}</dt><dd>${escape(shownKey)}</dd></div><div><dt>${t('defaultModel')}</dt><dd>${escape(hasSelectedModel() ? status!.preferences.model : t('notSelected'))}</dd></div></dl>
     <button class="pill pill-ink ccswitch-import" data-import-ccswitch ${hasSelectedModel() ? '' : 'disabled'}>${icon('external')}${t('ccImport')}</button>
     <p class="field-help">${t('ccHelp')} <button class="text-button" data-open-ccswitch-site>${t('ccDownload')}</button></p>`;
 }
 
 function modelListHtml() {
-  if (!status!.models.length) return `<p class="field-help">${t('noModelsSignIn')}</p>`;
-  return modelFamilies().map(family => {
-    const models = status!.models.filter(m => m.family === family);
-    return models.length ? `<div class="model-group"><span class="eyebrow">${escape(family)}</span>${models.map(m => `<div class="model-row"><span class="model-name">${escape(m.name)}</span><code>${escape(m.id)}</code><button class="subtle-icon" data-copy-model="${escape(m.id)}" title="${t('copyModelId')}" aria-label="${escape(t('copyValue', { value: m.id }))}">${icon('copy')}</button></div>`).join('')}</div>` : '';
-  }).join('');
+  if (!availableModels().length) return `<p class="field-help">${t('noModelsSignIn')}</p>`;
+  return availableModels().map(m => `<div class="model-row"><span class="model-name">${escape(modelName(m.id))}</span><code>${escape(m.id)}</code><button class="subtle-icon" data-copy-model="${escape(m.id)}" title="${t('copyModelId')}" aria-label="${escape(t('copyValue', { value: m.id }))}">${icon('copy')}</button></div>`).join('');
 }
 
 function renderDashboard() {
@@ -628,9 +647,10 @@ function renderDashboard() {
       <section class="status-card ${status!.running ? 'is-running' : ''}" data-proxy-state><span class="eyebrow">${t('localProxy')}</span><strong class="status-word" data-proxy-label>${t(status!.running ? 'running' : 'stopped')}</strong><div class="endpoint-row"><code>${escape(baseUrl())}</code><button class="pill pill-outline pill-small" data-copy-base>${icon('copy')}${t('copyAddress')}</button><button class="text-button" id="copy-key">${t('copyApiKey')}</button></div><p class="status-note">${t('sharedEndpoint')}</p>${figure('plug', 'status-figure')}</section>
       <div class="bento-stack">
         <section class="scene port-summary"><span class="eyebrow">${t('listenPort')}</span><strong class="port-big">${prefs.port}</strong><p>${t('localOnly')}</p><button class="text-button" data-go="settings">${t('changePort')}</button></section>
-        <section class="models-card"><div class="models-top"><span class="eyebrow">${t('modelCatalog')}</span><strong data-model-count>${status!.models.length}</strong></div><p data-model-summary>${escape(catalogSummary())}</p><div class="models-actions"><button class="pill pill-paper pill-small" data-toggle-models aria-expanded="${showModels}" aria-controls="model-list">${t(showModels ? 'hideModels' : 'showModelIds')}</button><button class="icon-button on-ink" data-refresh-models title="${t('refreshModels')}" aria-label="${t('refreshModels')}">${icon('refresh')}</button></div></section>
+        <section class="models-card"><div class="models-top"><span class="eyebrow">${t('modelCatalog')}</span><strong data-model-count>${availableModels().length}</strong></div><p data-model-summary>${escape(catalogSummary())}</p><div class="models-actions"><button class="pill pill-paper pill-small" data-toggle-models aria-expanded="${showModels}" aria-controls="model-list">${t(showModels ? 'hideModels' : 'showModelIds')}</button><button class="icon-button on-ink" data-refresh-models title="${t('refreshModels')}" aria-label="${t('refreshModels')}">${icon('refresh')}</button></div></section>
       </div>
       <section class="scene model-list" id="model-list" ${showModels ? '' : 'hidden'}>${modelListHtml()}</section>
+      <section class="scene recent-model" data-recent-model role="status">${recentModelHtml()}</section>
       <section class="scene account-strip">${accountHeading()}<div id="usage-content">${usageHtml()}</div></section>
     </div>
     <div class="api-split">
@@ -713,7 +733,7 @@ async function sendMessage() {
   const text = draft.trim();
   let conversation = current();
   if (!(conversation?.model || status.preferences.model)) { toast(t('pickModelFirst'), true); return; }
-  if (!status.models.some(m => m.id === (conversation?.model || status!.preferences.model))) { toast(t('modelGone'), true); return; }
+  if (!isKnownModel(conversation?.model || status!.preferences.model)) { toast(t('modelGone'), true); return; }
   if (!conversation) {
     conversation = { id: crypto.randomUUID(), title: text.replace(/\s+/g, ' ').slice(0, 30), model: status.preferences.model, thinkingEffort: effortValue(status.preferences.thinkingEffort), messages: [], updated: Date.now() };
     conversations.unshift(conversation); selected = conversation.id;
@@ -733,6 +753,7 @@ async function sendMessage() {
   const channel = new Channel<ChatEvent>();
   channel.onmessage = event => {
     if (event.type === 'delta') assistant.content += event.text;
+    if (event.type === 'model' && validServedModel(event.served)) assistant.servedModel = event.served;
     if (event.type === 'usage') { assistant.input = event.input; assistant.output = event.output; }
     if (event.type === 'cancelled') assistant.interrupted = true;
     if (event.type === 'error') assistant.error = event.message;
@@ -756,6 +777,8 @@ function updateMessage(message: Message) {
   if (!target || !scroll) return;
   const stick = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 140;
   target.outerHTML = messageHtml(message);
+  const modelStatus = el('chat-model-status');
+  if (modelStatus) modelStatus.innerHTML = actualModelHtml(message);
   if (stick) scroll.scrollTop = scroll.scrollHeight;
 }
 
@@ -786,7 +809,7 @@ async function refreshModels() {
   try {
     const catalog = await invoke<ModelCatalog & { models: Model[] }>('refresh_models');
     await refreshStatus();
-    toast(catalog.error || t('catalogUpdated', { count: catalog.models.length }), !!catalog.error);
+    toast(catalog.error || t('catalogUpdated', { count: catalog.models.filter(m => Object.hasOwn(tierKeys, m.id)).length }), !!catalog.error);
   } catch (error) { toast(String(error), true); }
   finally { refreshingModels = false; chrome(); }
 }

@@ -49,7 +49,7 @@ def main():
             result=post(a.base,key,request,a.thinking_effort)
             blocks,stop=assemble(result) if streaming else (result['content'],result['stop_reason'])
             assert stop=='tool_use', (streaming,stop)
-            tool=next(b for b in blocks if b['type']=='tool_use');assert tool['name']=='echo' and isinstance(tool['input'],dict)
+            tool=next(b for b in blocks if b['type']=='tool_use');assert tool['name']=='echo' and tool['input']=={'text':'hello'}, {'name':tool['name'],'input_keys':list(tool['input'])}
             request['messages'] += [{'role':'assistant','content':blocks},{'role':'user','content':[{'type':'tool_result','tool_use_id':tool['id'],'content':'ECHO_ROUNDTRIP_OK'}]}]
             request['tool_choice']={'type':'auto'}
             result=post(a.base,key,request,a.thinking_effort)

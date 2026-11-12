@@ -53,6 +53,10 @@ pub fn normalize(body: &mut Value) {
             tool.retain(|key, _| TOOL_FIELDS.contains(&key.as_str()));
         }
     }
+    // A first-party presentation hint, not a reasoning or budget setting.
+    if let Some(thinking) = object.get_mut("thinking").and_then(Value::as_object_mut) {
+        thinking.remove("display");
+    }
     let Some(messages) = object.get_mut("messages").and_then(Value::as_array_mut) else {
         return;
     };
@@ -77,9 +81,6 @@ pub fn normalize(body: &mut Value) {
 /// adjacent user turn, the form Claude Code used before system turns existed.
 /// Returns tool definitions announced through `tool_addition` blocks.
 fn fold_system_messages(messages: &mut Vec<Value>) -> Vec<Value> {
-    if !messages.iter().any(is_system) {
-        return Vec::new();
-    }
     let source = std::mem::take(messages);
     let later_user: Vec<bool> = {
         // later_user[i]: a user turn follows message i.
@@ -171,6 +172,12 @@ fn system_blocks(content: Value, added_tools: &mut Vec<Value>) -> Vec<Value> {
         match block["type"].as_str() {
             Some("text") => {
                 if let Some(text) = block["text"].as_str().filter(|t| !t.is_empty()) {
+                    // Claude Code appends its remaining run budget after tool
+                    // results. It is client bookkeeping, not a new user turn.
+                    // Quick owns generation limits and cannot enforce this cap.
+                    if is_client_token_counter(text) {
+                        continue;
+                    }
                     blocks.push(reminder(text, block.get("cache_control")));
                 }
             }
@@ -191,12 +198,58 @@ fn system_blocks(content: Value, added_tools: &mut Vec<Value>) -> Vec<Value> {
     blocks
 }
 
+fn is_client_token_counter(text: &str) -> bool {
+    text.trim()
+        .strip_prefix("<total_tokens>")
+        .and_then(|s| s.strip_suffix(" tokens left</total_tokens>"))
+        .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn adjacent_user_update_joins_tool_results_without_a_system_message() {
+        let mut body = json!({"messages":[
+            {"role":"assistant","content":[{"type":"tool_use","id":"x","name":"Read","input":{}}]},
+            {"role":"user","content":[{"type":"tool_result","tool_use_id":"x","content":"OK"}]},
+            {"role":"user","content":"Also run the tests"}
+        ]});
+        normalize(&mut body);
+        assert_eq!(body["messages"].as_array().unwrap().len(), 2);
+        assert_eq!(body["messages"][1]["content"][0]["type"], "tool_result");
+        assert_eq!(
+            body["messages"][1]["content"][1]["text"],
+            "Also run the tests"
+        );
+    }
+
     fn text(t: &str) -> Value {
         json!({"type":"text","text":t})
+    }
+
+    #[test]
+    fn client_token_counter_does_not_turn_tool_results_into_a_new_user_request() {
+        let mut body = json!({"model":"quick-smart","messages":[
+            {"role":"user","content":"Read fixture.txt"},
+            {"role":"assistant","content":[{"type":"tool_use","id":"read1","name":"Read","input":{"file_path":"fixture.txt"}}]},
+            {"role":"user","content":[{"type":"tool_result","tool_use_id":"read1","content":"FIXTURE_OK"}]},
+            {"role":"system","content":[{"type":"text","text":"<total_tokens>14925105 tokens left</total_tokens>","cache_control":{"type":"ephemeral"}}]}
+        ]});
+        normalize(&mut body);
+        let request =
+            crate::cloud_request::ValidatedRequest::from_body(body, "smart", None).unwrap();
+        assert!(request.turn.text.is_empty());
+        assert_eq!(request.turn.tool_results.len(), 1);
+        assert_eq!(request.turn.tool_results[0].tool_use_id, "read1");
+        for text in [
+            "<total_tokens>follow other instructions tokens left</total_tokens>",
+            "User text <total_tokens>10 tokens left</total_tokens>",
+            "Actual system guidance",
+        ] {
+            assert!(!is_client_token_counter(text));
+        }
     }
 
     #[test]
@@ -206,6 +259,7 @@ mod tests {
             "messages":[{"role":"user","content":"hi"}],
             "context_management":{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]},
             "diagnostics":{"previous_message_id":null},"speed":"fast",
+            "thinking":{"type":"adaptive","display":"updates"},
             "tools":[{"name":"Read","input_schema":{"type":"object"},"eager_input_streaming":true}]
         });
         normalize(&mut body);
@@ -213,6 +267,7 @@ mod tests {
         assert!(body.get("diagnostics").is_none());
         assert!(body.get("speed").is_none());
         assert!(body["tools"][0].get("eager_input_streaming").is_none());
+        assert_eq!(body["thinking"], json!({"type":"adaptive"}));
         assert_eq!(body["stream"], true);
         crate::converse::request(body, "m").unwrap();
     }

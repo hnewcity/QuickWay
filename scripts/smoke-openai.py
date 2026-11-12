@@ -25,9 +25,12 @@ def chat(client, model, effort):
     for stream in (False, True):
         messages = [{'role': 'user', 'content': ASK}]
         call = None
+        assistant_text = ''
         if stream:
             calls = {}
             for chunk in client.chat.completions.create(model=model, max_tokens=4096, messages=messages, tools=TOOLS_CHAT, stream=True, **extra):
+                if chunk.choices and chunk.choices[0].delta.content:
+                    assistant_text += chunk.choices[0].delta.content
                 for t in (chunk.choices[0].delta.tool_calls or []) if chunk.choices else []:
                     c = calls.setdefault(t.index, {'id': '', 'name': '', 'arguments': ''})
                     c['id'] += t.id or ''; c['name'] += (t.function.name or '') if t.function else ''
@@ -37,9 +40,10 @@ def chat(client, model, effort):
             r = client.chat.completions.create(model=model, max_tokens=4096, messages=messages, tools=TOOLS_CHAT, **extra)
             assert r.choices[0].finish_reason == 'tool_calls', r
             t = r.choices[0].message.tool_calls[0]
+            assistant_text = r.choices[0].message.content or ''
             call = {'id': t.id, 'name': t.function.name, 'arguments': t.function.arguments}
-        assert call['name'] == 'echo' and isinstance(json.loads(call['arguments']), dict), call
-        messages += [{'role': 'assistant', 'content': None, 'tool_calls': [{'id': call['id'], 'type': 'function',
+        assert call['name'] == 'echo' and json.loads(call['arguments']) == {'text': 'hello'}, {'name':call['name'],'input_keys':list(json.loads(call['arguments']))}
+        messages += [{'role': 'assistant', 'content': assistant_text or None, 'tool_calls': [{'id': call['id'], 'type': 'function',
                       'function': {'name': call['name'], 'arguments': call['arguments']}}]},
                      {'role': 'tool', 'tool_call_id': call['id'], 'content': 'ECHO_ROUNDTRIP_OK'}]
         r = client.chat.completions.create(model=model, max_tokens=4096, messages=messages, tools=TOOLS_CHAT, **extra)
@@ -61,7 +65,7 @@ def responses(client, model, effort):
         else:
             r = client.responses.create(model=model, max_output_tokens=4096, input=items, tools=TOOLS_RESP, **extra)
         call = next(o for o in r.output if o.type == 'function_call')
-        assert call.name == 'echo' and isinstance(json.loads(call.arguments), dict), call
+        assert call.name == 'echo' and json.loads(call.arguments) == {'text': 'hello'}, {'name':call.name,'input_keys':list(json.loads(call.arguments))}
         # Replay the whole output (reasoning included) statelessly.
         items += [o.model_dump(exclude_none=True) for o in r.output]
         items.append({'type': 'function_call_output', 'call_id': call.call_id, 'output': 'ECHO_ROUNDTRIP_OK'})
@@ -78,6 +82,7 @@ def main():
     a = p.parse_args()
     client = OpenAI(base_url=a.base + '/v1', api_key=pathlib.Path(a.key_file).read_text().strip(), max_retries=0, timeout=180)
     chat(client, a.model, a.effort)
+    print(json.dumps({'chat': True}), flush=True)
     responses(client, a.model, a.effort)
     print(json.dumps({'model': a.model, 'effort': a.effort, 'chat': True, 'responses': True}))
 

@@ -161,6 +161,38 @@ fn chat_stream_emits_openai_chunks_usage_and_done() {
 }
 
 #[test]
+fn upstream_permission_errors_keep_identity_and_never_complete_successfully() {
+    let denial = crate::model_error::ModelError::from_upstream("error", &json!({
+        "errorType":"AccessDeniedException", "error":"This client is not supported for this request."
+    })).event();
+    let mut chat = ChatStream::new(true);
+    let chunks = chat.event(&denial);
+    assert_eq!(chunks.len(), 1);
+    let error: Value = serde_json::from_str(&chunks[0]).unwrap();
+    assert_eq!(error["error"]["type"], "permission_error");
+    assert_eq!(error["error"]["code"], "AccessDeniedException");
+    assert_eq!(error["error"]["message"], denial["error"]["message"]);
+    assert!(chat.event(&json!({"type":"message_stop"})).is_empty());
+    assert!(chat.event(&denial).is_empty());
+
+    let mut responses = ResponsesStream::new(Default::default(), Default::default());
+    let events = responses.event(&denial);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].0, "response.failed");
+    assert_eq!(events[0].1["response"]["status"], "failed");
+    assert_eq!(
+        events[0].1["response"]["error"]["code"],
+        "AccessDeniedException"
+    );
+    assert_eq!(
+        events[0].1["response"]["error"]["message"],
+        denial["error"]["message"]
+    );
+    assert!(responses.event(&json!({"type":"message_stop"})).is_empty());
+    assert!(responses.event(&denial).is_empty());
+}
+
+#[test]
 fn responses_input_replays_signed_reasoning_and_tool_outputs() {
     let request = json!({"model":"claude-sonnet-4-6","instructions":"Be brief.","max_output_tokens":200,
         "reasoning":{"effort":"high","summary":"auto"},"store":false,"include":["reasoning.encrypted_content"],

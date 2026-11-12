@@ -51,13 +51,13 @@ test.beforeEach(async ({ page }, info) => {
     Object.defineProperty(navigator, 'platform', { value: mac ? 'MacIntel' : 'Win32' });
     const w = window as any;
     w.calls = [];
-    w.preferences = { port: 8741, model: 'claude-opus-4-8', projectDir: '', autoStart: true, thinkingEffort: 'off', codexModel: '', codexEffort: 'medium' };
+    w.preferences = { port: 8741, model: 'quick-smart', projectDir: '', autoStart: true, thinkingEffort: 'off', codexModel: '', codexEffort: 'medium' };
     let running = true;
     let finish: (() => void) | undefined;
     let pendingChannel: any;
     w.models = [
-      { id: 'claude-opus-4-8', name: 'Claude Opus 4.8', family: 'Anthropic', upstream: 'fixture' },
-      { id: 'gpt-6-astra', name: 'GPT-6 Astra', family: 'OpenAI', upstream: 'fixture' },
+      { id: 'quick-smart', name: 'Claude Opus 4.8', family: 'Anthropic', upstream: 'fixture' },
+      { id: 'quick-advanced', name: 'GPT-6 Astra', family: 'OpenAI', upstream: 'fixture' },
     ];
     w.modelCatalog = { source: 'cloud', lastUpdated: 1, error: null };
     // Window state for the custom title bar. Event listeners are kept so tests can emit window events.
@@ -73,7 +73,7 @@ test.beforeEach(async ({ page }, info) => {
       invoke: async (command: string, args: any = {}) => {
         w.calls.push({ command, args: JSON.parse(JSON.stringify(args)) });
         switch (command) {
-          case 'get_status': return { preferences: structuredClone(w.preferences), running, credentials: w.credentials || { source: 'local' }, account: { signedIn: w.credentials?.source === 'imported' ? !w.credentialUnavailable : !w.lockedKeychain, canRefresh: true, expiresAt: 2000000000, enterprise: true, error: w.credentialUnavailable ? '导入凭证文件无法读取' : w.lockedKeychain ? '钥匙串尚未授权' : null }, models: structuredClone(w.models), modelCatalog: structuredClone(w.modelCatalog), claudeInstalled: true, codexInstalled: w.codexInstalled ?? true, version: '0.3.0' };
+          case 'get_status': return { preferences: structuredClone(w.preferences), running, credentials: w.credentials || { source: 'local' }, account: { signedIn: w.credentials?.source === 'imported' ? !w.credentialUnavailable : !w.lockedKeychain, canRefresh: true, expiresAt: 2000000000, enterprise: true, error: w.credentialUnavailable ? '导入凭证文件无法读取' : w.lockedKeychain ? '钥匙串尚未授权' : null }, models: structuredClone(w.models), lastCloudModel: w.lastCloudModel || null, modelCatalog: structuredClone(w.modelCatalog), claudeInstalled: true, codexInstalled: w.codexInstalled ?? true, version: '0.3.0' };
           case 'export_credentials': w.exportedPath = args.path; return;
           case 'import_credentials':
             if (w.credentialError) throw w.credentialError;
@@ -105,6 +105,9 @@ test.beforeEach(async ({ page }, info) => {
               return new Promise<void>(resolve => { finish = resolve; });
             }
             args.onEvent.onmessage({ type: 'delta', text: '**模拟回答** <script>window.xss = true</script>' });
+            const served = Object.hasOwn(w, 'servedModel') ? w.servedModel : 'us.anthropic.claude-opus-5-5';
+            if (served !== null) args.onEvent.onmessage({ type: 'model', served });
+            w.lastCloudModel = { mode: args.model.replace('quick-', ''), servedModel: served, at: 1794458793 };
             args.onEvent.onmessage({ type: 'usage', input: 12, output: 8 });
             args.onEvent.onmessage({ type: 'done', reason: 'end_turn' });
             return;
@@ -151,15 +154,87 @@ test('Chinese composition, Enter, history and platform new-chat shortcut', async
   await expect(page.locator('.assistant .message-content')).toContainText('模拟回答');
 });
 
+test('actual model is confirmed by the response and persists independently of the selected tier', async ({ page }) => {
+  await expect(page.locator('#chat-model-status')).toContainText(zh.actualModelIdle);
+  await page.evaluate(() => { (window as any).servedModel = 'us.anthropic.claude-opus-4-8'; });
+  await page.locator('#prompt').fill('model metadata');
+  await page.locator('#send').click();
+  await expect(page.locator('.assistant .actual-model')).toContainText('Claude Opus 4.8');
+  await expect(page.locator('.assistant .actual-model')).toHaveAttribute('title', 'us.anthropic.claude-opus-4-8');
+  await expect(page.locator('.assistant .message-author')).toContainText(zh.tierSmart);
+  await chooseModel(page, 'chat', 'quick-advanced');
+  await expect(page.locator('#chat-model-status')).toContainText('Claude Opus 4.8');
+  await page.reload();
+  await openChat(page);
+  await expect(page.locator('.assistant .actual-model')).toContainText('Claude Opus 4.8');
+  await expect(page.locator('#chat-picker')).toHaveAttribute('data-model', 'quick-advanced');
+  await page.locator('#new-chat').click();
+  await expect(page.locator('#chat-model-status')).toContainText(zh.actualModelIdle);
+  await page.locator('#prompt').fill('hold');
+  await page.locator('#send').click();
+  await expect(page.locator('#chat-model-status')).toContainText(zh.actualModelPending);
+  await expect(page.locator('#chat-model-status')).not.toContainText('Opus');
+  await page.locator('#send').click();
+  await expect(page.locator('#chat-model-status')).toContainText(zh.actualModelUnknown);
+});
+
+test('missing and malformed model metadata stays unknown instead of using the requested tier', async ({ page }) => {
+  for (const served of [null, '<img src=x onerror="window.modelXss=true">', 'https://invalid/token']) {
+    await page.evaluate(served => { (window as any).servedModel = served; }, served);
+    await page.locator('#new-chat').click();
+    await page.locator('#prompt').fill('no confirmed model');
+    await page.locator('#send').click();
+    await expect(page.locator('.assistant .actual-model')).toContainText(zh.actualModelUnknown);
+    await expect(page.locator('#chat-model-status')).not.toContainText('Claude');
+  }
+  expect(await page.evaluate(() => (window as any).modelXss)).toBeUndefined();
+});
+
+test('latest proxy model is shown on dashboard and coding page without changing the tier', async ({ page }) => {
+  await page.clock.install();
+  await page.reload();
+  await page.evaluate(() => { (window as any).lastCloudModel = { mode: 'fast', servedModel: 'us.anthropic.claude-haiku-5-5', at: 1794458793 }; });
+  await page.clock.runFor(7100);
+  await page.locator('[data-view="dashboard"]').click();
+  await expect(page.locator('[data-recent-model]')).toContainText('Claude Haiku 5.5');
+  await expect(page.locator('[data-recent-model]')).toContainText(zh.tierFast);
+  await page.locator('[data-view="code"]').click();
+  await expect(page.locator('[data-recent-model]')).toContainText('Claude Haiku 5.5');
+  await expect(page.locator('#claude-picker')).toHaveAttribute('data-model', 'quick-smart');
+  await page.evaluate(() => { (window as any).lastCloudModel = null; });
+  await page.clock.runFor(7100);
+  await expect(page.locator('[data-recent-model]')).toContainText(zh.actualModelIdle);
+});
+
+test('old fixed selections and history require a tier choice and never invent the served model', async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as any).preferences.model = 'claude-sonnet-5-5';
+    localStorage.setItem('quickway.conversations.v1', JSON.stringify([{ id: 'old', title: 'Old chat', model: 'claude-sonnet-5-5', updated: 1, messages: [
+      { id: 'old-reply', role: 'assistant', model: 'claude-sonnet-5-5', content: 'An old reply' },
+    ] }]));
+  });
+  await page.reload();
+  await openChat(page);
+  await expect(page.locator('#chat-picker')).toContainText(zh.chooseModel);
+  await expect(page.locator('.assistant .actual-model')).toContainText(zh.actualModelUnknown);
+  await expect(page.locator('#workspace')).not.toContainText('claude-sonnet-5-5');
+  await page.locator('#prompt').fill('continue');
+  await page.locator('#send').click();
+  expect(await page.evaluate(() => (window as any).calls.some((c: any) => c.command === 'chat'))).toBe(false);
+  await chooseModel(page, 'chat', 'quick-smart');
+  await page.locator('#send').click();
+  await expect(page.locator('.assistant .actual-model').last()).toContainText('Claude Opus 5.5');
+});
+
 test('folder selection, launch preferences and platform connection copy', async ({ page }, info) => {
   await page.locator('[data-view="code"]').click();
   await expect(page.locator('#launch-claude')).toBeDisabled();
   await page.locator('#pick-folder').click();
   await expect(page.locator('#project-path')).not.toHaveValue('');
-  await chooseModel(page, 'claude', 'gpt-6-astra');
+  await chooseModel(page, 'claude', 'quick-advanced');
   await chooseEffort(page, 'claude', 'high');
   await page.locator('#launch-claude').click();
-  expect(await page.evaluate(() => (window as any).launched)).toMatchObject({ model: 'gpt-6-astra', thinkingEffort: 'high' });
+  expect(await page.evaluate(() => (window as any).launched)).toMatchObject({ model: 'quick-advanced', thinkingEffort: 'high' });
   await page.locator('[data-copy-connection]').click();
   await expect(page.locator('#toast')).toContainText(info.project.name.startsWith('mac') ? '终端 连接配置已复制' : 'PowerShell 连接配置已复制');
 });
@@ -173,26 +248,26 @@ test('Coding page switches between Claude Code and Codex, each with its own mode
   await expect(page.locator('[data-coding-tool="codex"]')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('#launch-claude')).toHaveCount(0);
   // With no Codex choice yet, the picker follows the shared default model.
-  await expect(page.locator('#codex-picker')).toHaveAttribute('data-model', 'claude-opus-4-8');
+  await expect(page.locator('#codex-picker')).toHaveAttribute('data-model', 'quick-smart');
   await expect(page.locator('#codex-picker')).toHaveAttribute('data-effort', 'medium');
   await expect(page.locator('#launch-codex')).toBeDisabled();
   await page.locator('#pick-folder').click();
   await expect(page.locator('#launch-codex')).toBeEnabled();
-  await chooseModel(page, 'codex', 'gpt-6-astra');
+  await chooseModel(page, 'codex', 'quick-advanced');
   await chooseEffort(page, 'codex', 'high');
   await page.locator('#launch-codex').click();
   await expect(page.locator('#toast')).toContainText(zh.codexLaunched);
-  expect(await page.evaluate(() => (window as any).codexLaunched)).toMatchObject({ codexModel: 'gpt-6-astra', codexEffort: 'high' });
+  expect(await page.evaluate(() => (window as any).codexLaunched)).toMatchObject({ codexModel: 'quick-advanced', codexEffort: 'high' });
   // Claude Code's choices are untouched, and the project folder is shared.
   const prefs = await page.evaluate(() => (window as any).preferences);
-  expect(prefs).toMatchObject({ model: 'claude-opus-4-8', thinkingEffort: 'off' });
+  expect(prefs).toMatchObject({ model: 'quick-smart', thinkingEffort: 'off' });
   await page.locator('[data-coding-tool="claude"]').click();
-  await expect(page.locator('#claude-picker')).toHaveAttribute('data-model', 'claude-opus-4-8');
+  await expect(page.locator('#claude-picker')).toHaveAttribute('data-model', 'quick-smart');
   await expect(page.locator('#project-path')).not.toHaveValue('');
   await expect(page.locator('#launch-claude')).toBeEnabled();
   await expect(page.locator('[data-copy-codex-config]')).toHaveCount(0);
   await page.locator('[data-coding-tool="codex"]').click();
-  await expect(page.locator('#codex-picker')).toHaveAttribute('data-model', 'gpt-6-astra');
+  await expect(page.locator('#codex-picker')).toHaveAttribute('data-model', 'quick-advanced');
   await page.locator('[data-copy-codex-config]').click();
   await expect(page.locator('#toast')).toContainText(zh.codexConfigCopied);
   expect(await page.evaluate(() => (window as any).codexConfigCopies)).toBe(1);
@@ -201,6 +276,34 @@ test('Coding page switches between Claude Code and Codex, each with its own mode
   await page.locator('[data-view="code"]').click();
   await expect(page.locator('[data-coding-tool="codex"]')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('#launch-codex')).toBeVisible();
+});
+
+test('Quick cloud modes preserve saved selection and launch with Claude Code and Codex', async ({ page }) => {
+  const modes = ['fast', 'balanced', 'smart', 'advanced'];
+  await page.evaluate(modes => {
+    const w = window as any;
+    w.nextModels = [...w.models, ...modes.map(mode => ({
+      id: `quick-${mode}`, name: `Quick ${mode} (cloud)`, family: 'Amazon Quick', upstream: `quick-cloud:${mode}`,
+    }))];
+  }, modes);
+  await page.locator('[data-refresh-models]').click();
+  await expect(page.locator('#chat-picker')).toHaveAttribute('data-model', 'quick-smart');
+  const pop = await openModels(page, 'chat');
+  await expect(pop.locator('.mode-family').first()).toHaveAttribute('aria-label', 'Amazon Quick');
+  expect(await pop.locator('[data-model-option]').evaluateAll(options => options.slice(0, 4).map(option => option.getAttribute('data-model-option'))))
+    .toEqual(modes.map(mode => `quick-${mode}`));
+  await closePicker(page, 'chat');
+  await page.locator('[data-view="code"]').click();
+  await expect(page.locator('#claude-picker')).toHaveAttribute('data-model', 'quick-smart');
+  await chooseModel(page, 'claude', 'quick-smart');
+  await page.locator('#pick-folder').click();
+  await page.locator('#launch-claude').click();
+  await expect.poll(() => page.evaluate(() => (window as any).launched?.model)).toBe('quick-smart');
+  await page.locator('[data-coding-tool="codex"]').click();
+  await expect(page.locator('#codex-picker')).toHaveAttribute('data-model', 'quick-smart');
+  await chooseModel(page, 'codex', 'quick-smart');
+  await page.locator('#launch-codex').click();
+  await expect.poll(() => page.evaluate(() => (window as any).codexLaunched?.codexModel)).toBe('quick-smart');
 });
 
 test('Codex launch stays disabled until Codex is installed', async ({ page }) => {
@@ -291,18 +394,18 @@ test('picker shows effort levels and models together, follows the keyboard and s
   // ↓ moves from the levels into the list, starting at the current model; ↑ from the top goes back.
   await page.locator('#chat-effort-medium').focus();
   await page.keyboard.press('ArrowDown');
-  await expect(pop.locator('[data-model-option="claude-opus-4-8"]')).toBeFocused();
-  await expect(pop.locator('[data-model-option="claude-opus-4-8"]')).toHaveAttribute('aria-selected', 'true');
+  await expect(pop.locator('[data-model-option="quick-smart"]')).toBeFocused();
+  await expect(pop.locator('[data-model-option="quick-smart"]')).toHaveAttribute('aria-selected', 'true');
   await page.keyboard.press('ArrowUp');
   await expect(page.locator('#chat-effort-medium')).toBeFocused();
   // Picking a model closes the popover and returns focus to the pill.
-  await pop.locator('[data-model-option="gpt-6-astra"]').click();
+  await pop.locator('[data-model-option="quick-advanced"]').click();
   await expect(pop).toBeHidden();
   await expect(trigger).toBeFocused();
-  await expect.poll(() => page.evaluate(() => (window as any).preferences.model)).toBe('gpt-6-astra');
+  await expect.poll(() => page.evaluate(() => (window as any).preferences.model)).toBe('quick-advanced');
   // Clicking outside closes it; Escape closes and returns focus to the pill.
   await trigger.click();
-  await expect(pop.locator('[data-model-option="gpt-6-astra"]')).toHaveAttribute('aria-selected', 'true');
+  await expect(pop.locator('[data-model-option="quick-advanced"]')).toHaveAttribute('aria-selected', 'true');
   await page.locator('#prompt').click();
   await expect(pop).toBeHidden();
   await expect(trigger).toHaveAttribute('aria-expanded', 'false');
@@ -310,45 +413,45 @@ test('picker shows effort levels and models together, follows the keyboard and s
   await page.keyboard.press('Escape');
   await expect(pop).toBeHidden();
   await expect(trigger).toBeFocused();
-  await expect(trigger).toContainText('GPT-6 Astra');
+  await expect(trigger).toContainText(zh.tierAdvanced);
   await expect(trigger).toContainText('思考 · 中');
 });
 
 test('dynamic refresh adds models safely without losing draft, selection or launch choice', async ({ page }) => {
   const name = 'Claude <img src=x onerror="window.catalogXss=true"> & new';
   await page.locator('#prompt').fill('保留这段草稿');
-  await page.evaluate(name => { const w = window as any; w.nextModels = [...w.models, { id: 'claude-opus-9', name, family: 'Anthropic', upstream: 'fixture' }]; }, name);
+  await page.evaluate(name => { const w = window as any; w.nextModels = [...w.models, { id: 'quick-balanced', name, family: 'Anthropic', upstream: 'fixture' }]; }, name);
   await page.locator('[data-refresh-models]').click();
   await expect(await modelOptions(page, 'chat')).toHaveCount(3);
   await closePicker(page, 'chat');
-  await expect(page.locator('#chat-picker')).toHaveAttribute('data-model', 'claude-opus-4-8');
+  await expect(page.locator('#chat-picker')).toHaveAttribute('data-model', 'quick-smart');
   await expect(page.locator('#prompt')).toHaveValue('保留这段草稿');
-  await expect((await openModels(page, 'chat')).locator('[data-model-option="claude-opus-9"] .mode-option-name')).toHaveText(name);
+  await expect((await openModels(page, 'chat')).locator('[data-model-option="quick-balanced"] .mode-option-name')).toHaveText(zh.tierBalanced);
   await closePicker(page, 'chat');
   expect(await page.evaluate(() => (window as any).catalogXss)).toBeUndefined();
-  await chooseModel(page, 'chat', 'claude-opus-9');
+  await chooseModel(page, 'chat', 'quick-balanced');
   await page.locator('#send').click();
-  await expect.poll(() => page.evaluate(() => (window as any).calls.find((c: any) => c.command === 'chat')?.args.model)).toBe('claude-opus-9');
+  await expect.poll(() => page.evaluate(() => (window as any).calls.find((c: any) => c.command === 'chat')?.args.model)).toBe('quick-balanced');
   await page.locator('[data-view="code"]').click();
-  await expect(page.locator('#claude-picker')).toHaveAttribute('data-model', 'claude-opus-9');
+  await expect(page.locator('#claude-picker')).toHaveAttribute('data-model', 'quick-balanced');
   await page.locator('#pick-folder').click();
   await page.locator('#launch-claude').click();
-  expect(await page.evaluate(() => (window as any).launched.model)).toBe('claude-opus-9');
+  expect(await page.evaluate(() => (window as any).launched.model)).toBe('quick-balanced');
 });
 
 test('removed selection remains explicit and cannot silently send to another model', async ({ page }) => {
-  await chooseModel(page, 'chat', 'gpt-6-astra');
+  await chooseModel(page, 'chat', 'quick-advanced');
   await page.locator('#prompt').fill('保留草稿');
-  await page.evaluate(() => { const w = window as any; w.nextModels = w.models.filter((m: any) => m.id !== 'gpt-6-astra'); });
+  await page.evaluate(() => { const w = window as any; w.nextModels = w.models.filter((m: any) => m.id !== 'quick-advanced'); });
   await page.locator('[data-refresh-models]').click();
-  await expect(page.locator('#chat-picker')).toHaveAttribute('data-model', 'gpt-6-astra');
+  await expect(page.locator('#chat-picker')).toHaveAttribute('data-model', 'quick-advanced');
   await expect((await openModels(page, 'chat')).locator('.mode-missing')).toContainText('当前目录中不可用');
   await closePicker(page, 'chat');
   await page.locator('#send').click();
-  await expect(page.locator('#toast')).toContainText('当前模型已不在目录中');
+  await expect(page.locator('#toast')).toContainText('当前档位已不在目录中');
   await expect(page.locator('#prompt')).toHaveValue('保留草稿');
   expect(await page.evaluate(() => (window as any).calls.some((c: any) => c.command === 'chat'))).toBe(false);
-  await chooseModel(page, 'chat', 'claude-opus-4-8');
+  await chooseModel(page, 'chat', 'quick-smart');
   await page.locator('#send').click();
   await expect(page.locator('.assistant .message-content')).toContainText('模拟回答');
 });
@@ -360,7 +463,7 @@ test('failed refresh keeps choices and active stream intact', async ({ page }) =
   await page.evaluate(() => { (window as any).refreshError = true; });
   await page.locator('[data-refresh-models]').click();
   await expect(page.locator('[data-model-summary]')).toContainText('沿用上次目录');
-  await expect(page.locator('#chat-picker')).toHaveAttribute('data-model', 'claude-opus-4-8');
+  await expect(page.locator('#chat-picker')).toHaveAttribute('data-model', 'quick-smart');
   await expect(page.locator('#chat-picker')).toBeDisabled();
   await expect(page.locator('.assistant .message-content')).toContainText('正在生成');
   await page.locator('#send').click();
@@ -373,11 +476,11 @@ test('periodic status updates choices without disturbing focused composer', asyn
   await page.reload();
   await openChat(page);
   await page.locator('#prompt').fill('定时刷新时的草稿');
-  await page.evaluate(() => { (window as any).models.push({id:'gpt-99-new',name:'Future GPT',family:'OpenAI',upstream:'fixture'}); });
+  await page.evaluate(() => { (window as any).models.push({id:'quick-fast',name:'Future GPT',family:'OpenAI',upstream:'fixture'}); });
   await page.clock.runFor(7100);
   await expect(page.locator('#prompt')).toBeFocused();
   await expect(page.locator('#prompt')).toHaveValue('定时刷新时的草稿');
-  await expect(page.locator('#chat-picker')).toHaveAttribute('data-model', 'claude-opus-4-8');
+  await expect(page.locator('#chat-picker')).toHaveAttribute('data-model', 'quick-smart');
   await expect(await modelOptions(page, 'chat')).toHaveCount(3);
 });
 
@@ -402,10 +505,10 @@ test('credential failure preserves cached new models and selection while showing
   await openChat(page);
   await page.evaluate(() => {
     const w = window as any;
-    w.models.push({ id: 'claude-opus-5-5', name: 'Claude Opus 5.5', family: 'Anthropic', upstream: 'fixture', origin: 'cloud' });
+    w.models.push({ id: 'quick-balanced', name: 'Claude Opus 5.5', family: 'Anthropic', upstream: 'fixture', origin: 'cloud' });
   });
   await page.clock.runFor(7100);
-  await chooseModel(page, 'chat', 'claude-opus-5-5');
+  await chooseModel(page, 'chat', 'quick-balanced');
   await page.locator('#prompt').fill('授权恢复后继续这段草稿');
   await page.evaluate(() => {
     const w = window as any;
@@ -413,7 +516,7 @@ test('credential failure preserves cached new models and selection while showing
     w.modelCatalog = { source: 'cache', lastUpdated: 1, error: '钥匙串尚未授权' };
   });
   await page.clock.runFor(7100);
-  await expect(page.locator('#chat-picker')).toHaveAttribute('data-model', 'claude-opus-5-5');
+  await expect(page.locator('#chat-picker')).toHaveAttribute('data-model', 'quick-balanced');
   await expect(page.locator('[data-model-summary]')).toContainText('沿用上次目录');
   await expect(page.locator('#login-notice')).toBeVisible();
   await expect(page.locator('#login-notice')).toContainText('钥匙串尚未授权');
@@ -425,7 +528,7 @@ test('credential failure preserves cached new models and selection while showing
   await page.evaluate(() => { (window as any).lockedKeychain = false; });
   await page.clock.runFor(7100);
   await expect(page.locator('#login-notice')).toBeHidden();
-  await expect(page.locator('#chat-picker')).toHaveAttribute('data-model', 'claude-opus-5-5');
+  await expect(page.locator('#chat-picker')).toHaveAttribute('data-model', 'quick-balanced');
 });
 
 test('Windows draws its own caption buttons over a draggable ink band', async ({ page }, info) => {
@@ -469,7 +572,7 @@ test('dashboard examples use the live port, model and a hidden key that copies f
   const code = page.locator('#api-code');
   await expect(page.locator('[data-api-language="shell"]')).toHaveText(mac ? 'cURL' : 'PowerShell');
   await expect(code).toContainText('http://127.0.0.1:8741/v1/chat/completions');
-  await expect(code).toContainText('"claude-opus-4-8"');
+  await expect(code).toContainText('"quick-smart"');
   await expect(code).toContainText(mac ? 'curl ' : 'Invoke-RestMethod');
   await expect(code).not.toContainText('fixture-key');
   await page.locator('[data-api-format="anthropic"]').click();
@@ -484,9 +587,9 @@ test('dashboard examples use the live port, model and a hidden key that copies f
   await expect(page.locator('.import-preview')).toContainText('fixture-key');
   // A changed default model reaches the examples on the next visit.
   await page.locator('[data-view="code"]').click();
-  await chooseModel(page, 'claude', 'gpt-6-astra');
+  await chooseModel(page, 'claude', 'quick-advanced');
   await page.locator('[data-view="dashboard"]').click();
-  await expect(page.locator('#api-code')).toContainText('"gpt-6-astra"');
+  await expect(page.locator('#api-code')).toContainText('"quick-advanced"');
   await expect(page.locator('[data-api-language="python"]')).toHaveAttribute('aria-pressed', 'true');
 });
 
@@ -495,8 +598,8 @@ test('model IDs can be listed and copied from the dashboard', async ({ page }) =
   await expect(page.locator('#model-list')).toBeHidden();
   await page.locator('[data-toggle-models]').click();
   await expect(page.locator('.model-row')).toHaveCount(2);
-  await page.locator('[data-copy-model="gpt-6-astra"]').click();
-  await expect.poll(() => page.evaluate(() => (window as any).copied)).toBe('gpt-6-astra');
+  await page.locator('[data-copy-model="quick-advanced"]').click();
+  await expect.poll(() => page.evaluate(() => (window as any).copied)).toBe('quick-advanced');
   await page.locator('[data-toggle-models]').click();
   await expect(page.locator('#model-list')).toBeHidden();
   await page.locator('[data-go="settings"]').click();
@@ -507,7 +610,7 @@ test('model IDs can be listed and copied from the dashboard', async ({ page }) =
 test('CC Switch import waits for a pending model save and reports a missing app', async ({ page }) => {
   await page.locator('[data-view="code"]').click();
   await page.evaluate(() => { (window as any).delayPreferenceSaves = true; });
-  await chooseModel(page, 'claude', 'gpt-6-astra');
+  await chooseModel(page, 'claude', 'quick-advanced');
   await page.locator('[data-view="dashboard"]').click();
   await page.locator('[data-import-ccswitch]').click();
   await expect.poll(() => page.evaluate(() => typeof (window as any).releasePreferences)).toBe('function');
@@ -532,35 +635,28 @@ test('conversation history only shows on the chat test page', async ({ page }) =
   await expect(page.locator('#recents-panel')).toBeVisible();
 });
 
-test('every cloud family is visible in chat, launcher and model list', async ({ page }) => {
+test('fixed model catalog entries stay hidden in chat, both launchers and dashboard', async ({ page }) => {
   const extra = [
-    { id: 'claude-fable-5-1', name: 'Fable 5.1', family: 'Anthropic', upstream: 'us.anthropic.claude-fable-5-1' },
-    { id: 'amazon.nova-2-5-sonic', name: 'Nova', family: 'Amazon', upstream: 'amazon.nova-2-5-sonic' },
+    { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', family: 'Anthropic', upstream: 'us.anthropic.claude-sonnet-5-5' },
+    { id: 'gpt-6-astra', name: 'GPT-6 Astra', family: 'OpenAI', upstream: 'us.openai.gpt-6-astra' },
     { id: 'vendor.future-1', name: 'Future', family: 'Vendor <img src=x onerror="window.familyXss=true">', upstream: 'vendor.future-1' },
   ];
   await page.evaluate(extra => { const w = window as any; w.nextModels = [...w.models, ...extra]; }, extra);
   await page.locator('[data-refresh-models]').click();
-  await expect(await modelOptions(page, 'chat')).toHaveCount(5);
+  await expect(await modelOptions(page, 'chat')).toHaveCount(2);
+  await expect(page.locator('#chat-picker-pop')).not.toContainText('Claude Sonnet');
+  await expect(page.locator('#chat-picker-pop')).not.toContainText('GPT-6');
   await closePicker(page, 'chat');
-  const pop = await openModels(page, 'chat');
-  for (const model of extra) await expect(pop.locator(`[data-model-option="${model.id}"] .mode-option-name`)).toHaveText(model.name);
-  await expect(pop).not.toContainText('兼容');
-  await closePicker(page, 'chat');
-  await chooseModel(page, 'chat', 'claude-fable-5-1');
-  await page.locator('#prompt').fill('Fable test');
-  await page.locator('#send').click();
-  await expect.poll(() => page.evaluate(() => (window as any).calls.find((c: any) => c.command === 'chat')?.args.model)).toBe('claude-fable-5-1');
   await page.locator('[data-view="code"]').click();
-  await expect(await modelOptions(page, 'claude')).toHaveCount(5);
+  await expect(await modelOptions(page, 'claude')).toHaveCount(2);
   await closePicker(page, 'claude');
-  await chooseModel(page, 'claude', 'vendor.future-1');
-  await page.locator('#pick-folder').click();
-  await page.locator('#launch-claude').click();
-  await expect.poll(() => page.evaluate(() => (window as any).launched?.model)).toBe('vendor.future-1');
+  await page.locator('[data-coding-tool="codex"]').click();
+  await expect(await modelOptions(page, 'codex')).toHaveCount(2);
+  await closePicker(page, 'codex');
   await page.locator('[data-view="dashboard"]').click();
   await page.locator('[data-toggle-models]').click();
-  await expect(page.locator('#model-list .model-row')).toHaveCount(5);
-  for (const model of extra) await expect(page.locator('#model-list')).toContainText(model.id);
+  await expect(page.locator('#model-list .model-row')).toHaveCount(2);
+  for (const model of extra) await expect(page.locator('#model-list')).not.toContainText(model.id);
   expect(await page.evaluate(() => (window as any).familyXss)).toBeUndefined();
 });
 
@@ -568,13 +664,13 @@ test('successful empty cloud refresh removes all available choices and blocks st
   await page.locator('#prompt').fill('保留草稿');
   await page.evaluate(() => { (window as any).nextModels = []; });
   await page.locator('[data-refresh-models]').click();
-  await expect(page.locator('[data-model-summary]')).toContainText('0 个模型 · 已同步');
+  await expect(page.locator('[data-model-summary]')).toContainText('0 个档位 · 已同步');
   await expect(await modelOptions(page, 'chat')).toHaveCount(0);
   await closePicker(page, 'chat');
   await expect((await openModels(page, 'chat')).locator('.mode-missing')).toContainText('当前目录中不可用');
   await closePicker(page, 'chat');
   await page.locator('#send').click();
-  await expect(page.locator('#toast')).toContainText('当前模型已不在目录中');
+  await expect(page.locator('#toast')).toContainText('当前档位已不在目录中');
   await expect(page.locator('#prompt')).toHaveValue('保留草稿');
   await page.locator('[data-view="code"]').click();
   await page.locator('#pick-folder').click();
@@ -587,9 +683,10 @@ test('successful empty cloud refresh removes all available choices and blocks st
   expect(await page.evaluate(() => (window as any).calls.some((c: any) => c.command === 'chat' || c.command === 'launch_claude'))).toBe(false);
 });
 
-test('first launch without cloud data has no invented default and recovers on refresh', async ({ page }) => {
+test('an empty saved selection survives unavailable cloud data and recovers on refresh', async ({ page }) => {
   await page.addInitScript(() => {
     const w = window as any;
+    // Preserve an explicitly empty older preference; new native defaults use quick-smart.
     w.preferences.model = '';
     w.models = [];
     w.modelCatalog = { source: 'unavailable', lastUpdated: null, error: '网络不可用' };
@@ -598,20 +695,20 @@ test('first launch without cloud data has no invented default and recovers on re
   await openChat(page);
   await expect(await modelOptions(page, 'chat')).toHaveCount(0);
   await closePicker(page, 'chat');
-  await expect((await openModels(page, 'chat')).locator('.mode-missing')).toHaveText('暂无云端模型，请刷新目录');
+  await expect((await openModels(page, 'chat')).locator('.mode-missing')).toHaveText('暂无云端档位，请刷新目录');
   await closePicker(page, 'chat');
   await expect(page.locator('[data-model-summary]')).toContainText('尚未获取云端目录');
   await page.locator('#prompt').fill('等待目录');
   await page.locator('#send').click();
-  await expect(page.locator('#toast')).toContainText('请先从云端目录选择模型');
-  await page.evaluate(() => { (window as any).nextModels = [{ id: 'claude-fable-5-1', name: 'Fable 5.1', family: 'Anthropic', upstream: 'us.anthropic.claude-fable-5-1' }]; });
+  await expect(page.locator('#toast')).toContainText('请先从云端目录选择档位');
+  await page.evaluate(() => { (window as any).nextModels = [{ id: 'quick-fast', name: 'Fable 5.1', family: 'Anthropic', upstream: 'us.anthropic.quick-fast' }]; });
   await page.locator('[data-refresh-models]').click();
   await expect(await modelOptions(page, 'chat')).toHaveCount(1);
   await closePicker(page, 'chat');
   await expect(page.locator('#chat-picker')).toHaveAttribute('data-model', '');
-  await chooseModel(page, 'chat', 'claude-fable-5-1');
+  await chooseModel(page, 'chat', 'quick-fast');
   await page.locator('#send').click();
-  await expect.poll(() => page.evaluate(() => (window as any).calls.find((c: any) => c.command === 'chat')?.args.model)).toBe('claude-fable-5-1');
+  await expect.poll(() => page.evaluate(() => (window as any).calls.find((c: any) => c.command === 'chat')?.args.model)).toBe('quick-fast');
 });
 
 test('authorizing after a signed-out startup also loads usage', async ({ page }, info) => {

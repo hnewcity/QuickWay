@@ -248,6 +248,31 @@ pub async fn dispatch(
     let Some(name) = body["model"].as_str() else {
         return Err(Failure::new(400, "model is required"));
     };
+    if let Some(mode) = crate::cloud::mode(name).map(str::to_owned) {
+        let selected = headers
+            .get("x-quickway-thinking-effort")
+            .map(|value| {
+                value
+                    .to_str()
+                    .map(str::to_owned)
+                    .map_err(|_| Failure::new(400, "Invalid thinking effort header"))
+            })
+            .transpose()?
+            .or_else(|| {
+                effort.map(|value| {
+                    match value {
+                        crate::thinking::Effort::Off | crate::thinking::Effort::Low => "low",
+                        crate::thinking::Effort::Medium => "medium",
+                        crate::thinking::Effort::High => "high",
+                    }
+                    .to_owned()
+                })
+            });
+        let selected = selected
+            .as_deref()
+            .map(|v| if v == "off" { "low" } else { v });
+        return crate::cloud::dispatch(&app.upstream, body, &mode, selected).await;
+    }
     let (model, model_id) = app
         .upstream
         .models(false)

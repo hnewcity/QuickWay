@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::BytesMut;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const PRELUDE_LEN: usize = 12;
 const MIN_FRAME_LEN: usize = 16;
@@ -219,11 +219,11 @@ fn decode_payload(headers: &Headers, payload: &[u8], proxy: bool) -> Result<Valu
         Some("event") => {}
         Some("exception") => {
             let kind = string_header(headers, ":exception-type")?.unwrap_or("unknown");
-            return Err(format!("Bedrock EventStream exception: {kind}"));
+            return upstream_failure("exception", kind, payload, proxy);
         }
         Some("error") => {
             let code = string_header(headers, ":error-code")?.unwrap_or("unknown");
-            return Err(format!("Bedrock EventStream error: {code}"));
+            return upstream_failure("error", code, payload, proxy);
         }
         Some(other) => return Err(format!("Unexpected EventStream message type: {other}")),
         None => return Err("EventStream frame is missing :message-type".into()),
@@ -256,6 +256,27 @@ fn decode_payload(headers: &Headers, payload: &[u8], proxy: bool) -> Result<Valu
         return Err("Bedrock chunk does not contain a typed Anthropic event object".into());
     }
     Ok(event)
+}
+
+fn upstream_failure(
+    frame_kind: &str,
+    code: &str,
+    payload: &[u8],
+    proxy: bool,
+) -> Result<Value, String> {
+    let mut details = serde_json::from_slice::<Value>(payload)
+        .ok()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
+    details["errorType"] = code.into();
+    if proxy {
+        // Preserve the error identity for the model protocol translator. It
+        // emits one terminal failure instead of inventing a successful stop.
+        Ok(json!({"eventType":"error","payload":details}))
+    } else {
+        let error = crate::model_error::ModelError::from_upstream(code, &details);
+        Err(format!("Bedrock EventStream {frame_kind}: {error}"))
+    }
 }
 
 #[cfg(test)]

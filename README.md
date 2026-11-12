@@ -42,10 +42,10 @@ QuickWay is a desktop gateway that exposes the models of your signed-in Amazon Q
 | 🔌 **Anthropic-compatible API** | `/v1/messages` endpoint for the Anthropic SDK and Claude Code |
 | 🔌 **OpenAI-compatible API** | `/v1/chat/completions` and `/v1/responses` endpoints for the OpenAI SDK and Codex |
 | 🚀 **Coding Launcher** | Start Claude Code or Codex in its own terminal with one click, each with its own model and effort |
-| 🧠 **Thinking Effort** | Off / Low / Medium / High, mapped to each model's native reasoning controls |
-| 📋 **Dynamic Model Catalog** | Models are read from your Quick account and refreshed automatically |
+| 🧠 **Thinking Effort** | Cloud effort hints, plus native reasoning controls on legacy model routes |
+| 📋 **Cloud Tiers** | Choose Fast, Balanced, Smart or Advanced; see the model actually used in each response |
 | 🛠️ **Tool Calling** | Function calling for Messages, Chat Completions and Responses |
-| 👁️ **Vision Support** | Send base64 images to the model |
+| 👁️ **Vision Support** | Base64 images on supported legacy model routes; cloud modes currently accept text and tools |
 | 📡 **Streaming** | Full SSE streaming support |
 | 💬 **Built-in Chat** | Test your setup with the integrated chat interface |
 | 🔐 **Local & Safe Credentials** | Loopback-only proxy with its own API key; tokens stay in memory and come from Windows Credential Manager or macOS Keychain |
@@ -92,10 +92,31 @@ Requires Rust (see `rust-toolchain.toml`) and Node.js 20.19+ or 22.12+. On macOS
 
 1. **Sign in** to Amazon Quick on this computer
 2. **Launch** QuickWay - it picks up the signed-in account automatically
-3. **Open** the Coding tab, choose Claude Code or Codex, a model and a project folder, then press Launch
+3. **Open** the Coding tab, choose Claude Code or Codex, the recommended `quick-smart` mode and a project folder, then press Launch
 4. **Or** use `http://127.0.0.1:8741` as your Anthropic/OpenAI API endpoint, with the API key from Connection settings
 
-> Model IDs come from your account. Use an ID returned by `GET /v1/models`.
+Use an ID returned by `GET /v1/models`. New desktop installations default to `quick-smart`; existing saved model selections are preserved.
+
+### Quick cloud modes
+
+| API model ID | Quick agent mode |
+|---|---|
+| `quick-fast` | `fast` |
+| `quick-balanced` | `balanced` |
+| `quick-smart` | `smart` (recommended default) |
+| `quick-advanced` | `advanced` |
+
+These IDs select Quick's cloud agent modes. Quick chooses the concrete model. The cloud route currently supports social/AIDP sign-ins; enterprise/gateway sign-ins are not supported by this route.
+
+The legacy fixed-model route can return `AccessDeniedException: This client is not supported for this request.` A successful sign-in or model catalog fetch does not establish inference access. Fixed IDs remain in the API catalog, while desktop pickers show only cloud tiers. Saved fixed-model selections require an explicit tier choice.
+
+Chat replies preserve the actual model reported by the server. Dashboard and Coding also show the current account's latest completed cloud response through the local proxy, including requests from Claude Code, Codex and API clients. Missing model metadata stays unknown; selecting a tier does not guarantee a particular model version.
+
+Cloud conversations use a stateful connection, cached in the current QuickWay process for up to 10 idle minutes. After a restart, expiry or cache eviction, QuickWay can rebuild a cloud session from supported, completed history: text messages and paired tool calls/results, including multiple text result blocks and tool error status. Ordinary tool round-trips continue directly while their original session is retained.
+
+After a connection is lost, a request carrying all completed tool results can rebuild the session and continue from those results. QuickWay does not execute tools during rebuilding. History rebuilding still rejects unpaired tool calls/results, nonempty assistant text after a tool call, user text before tool results, images/documents and signed thinking blocks. Missing tool results cannot be manufactured or resumed on a new session.
+
+Quick controls generation and reasoning limits. `max_tokens` is retained for diagnostics, not enforced as an upstream cap; thinking budgets become effort hints. The Off setting does not guarantee that cloud reasoning is disabled. Cloud modes currently support text and tool calls, and reject unsupported sampling controls (`temperature`, `top_p`, `top_k`), images, documents, forced tool choice and structured outputs.
 
 ### Example: cURL
 
@@ -104,7 +125,7 @@ curl http://127.0.0.1:8741/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_PROXY_API_KEY" \
   -d '{
-    "model": "claude-sonnet-4-6",
+    "model": "quick-smart",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```
@@ -120,7 +141,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="claude-sonnet-4-6",
+    model="quick-smart",
     messages=[{"role": "user", "content": "Hello!"}]
 )
 print(response.choices[0].message.content)
@@ -137,7 +158,7 @@ const client = new OpenAI({
 });
 
 const response = await client.chat.completions.create({
-  model: 'claude-sonnet-4-6',
+  model: 'quick-smart',
   messages: [{ role: 'user', content: 'Hello!' }],
 });
 console.log(response.choices[0].message.content);
@@ -174,8 +195,46 @@ console.log(response.choices[0].message.content);
 | Option | Description |
 |---|---|
 | Thinking effort | Off / Low / Medium / High per chat or launch, or the `x-quickway-thinking-effort` request header |
-| Model catalog | Refreshed every 5 minutes, or on demand from the chat toolbar |
+| Cloud tiers | Refreshed every 5 minutes, or on demand from the chat toolbar |
 | Start with app | Start the proxy automatically when QuickWay opens |
+
+### Diagnostics
+
+`quickway doctor --online` checks sign-in, account access and the model catalog without generating a reply. Its report marks inference as `not_checked`; a working catalog does not prove model requests work.
+
+Run `quickway doctor --probe-model quick-smart` to also make one model request (choose an ID from `/v1/models`). The probe requests a brief reply with `max_tokens: 32` and uses a 30-second deadline. Cloud modes do not guarantee that token cap. The probe consumes model quota and reports completion or the upstream error without including generated text.
+
+### Live cloud checks
+
+These explicit, opt-in checks use synthetic prompts and fixtures with `quick-smart`, but make real requests and consume Quick quota. Run them from the repository root with a supported social/AIDP sign-in and `python` available on PATH. Each command starts a temporary proxy on a random loopback port with a temporary API key, then shuts it down and unregisters its temporary cloud devices after the suite, including when a check fails.
+
+```sh
+cargo run --example smoke_cloud -- messages
+cargo run --example smoke_cloud -- openai
+cargo run --example smoke_cloud -- history
+cargo run --example smoke_cloud -- claude
+cargo run --example smoke_cloud -- claude-normal
+cargo run --example smoke_cloud -- claude-project
+cargo run --example smoke_cloud -- codex-project
+cargo run --example smoke_cloud -- codex-recovery
+```
+
+| Suite | Checks and additional requirements |
+|---|---|
+| `messages` | Messages text, streaming and automatic tool round-trips |
+| `openai` | Chat Completions and Responses text, streaming and tools; requires the Python OpenAI SDK (`python -m pip install openai`) |
+| `history` | Completed text/tool history rebuilding, multiple tool calls, follow-ups and cancellation |
+| `claude` | Requires an installed `claude` CLI; enables only its `Read` tool to read a synthetic file in a temporary directory |
+| `claude-normal` | Loads normal Claude Code settings and the full default tool catalog; allows `Read` to read the synthetic fixture |
+| `claude-project` | Full normal tool catalog; creates a runnable Python project, sends a user update during a shell call, then adds a failing acceptance test for CC to fix. Independently runs the final tests and retains the synthetic project/report in a temporary directory. |
+| `codex-project` | Uses the installed Codex CLI, normal user settings and the desktop launcher's Responses provider/catalog configuration. Creates and tests a Python project, resumes the same Codex thread for a failing new requirement, and independently verifies the completed CLI. Covers native freeform tools, including code-mode `exec` calls that apply patches and run commands. |
+| `codex-recovery` | Runs the same real Codex project acceptance, deliberately restarting only the test proxy's cloud sessions after the project files have been created and before the tool result is forwarded. Verifies rebuilding from completed results and continuing the project without modifying existing tests. Recovered transport errors are recorded explicitly; HTTP 400 and model failures fail the run. The fault-injection endpoint exists only in this test harness. |
+
+User messages arriving alongside tool results continue in the same cloud session. The bridge carries the new text once in a labeled client-update block on the final tool result, preserving original tool output and error status. Quick's native decision widgets are presented as plain questions and Markdown options in API replies; fenced XML examples remain literal.
+
+History matching treats omitted tool parameters and their declared schema defaults as equivalent, including Claude Code's automatic `Edit.replace_all=false`. Tool IDs, paths, replacement text and non-default values must still match.
+
+Cloud tool descriptions that exceed Quick's 8192-character registration limit retain their full documentation in the system prompt. In cloud replies, standard input/cache usage describes the last internal model call, so repeated cloud prompts do not trigger premature client compaction. `quickway.cloud_usage` on Messages replies preserves the aggregate upstream usage for the reply. Claude Code's transient remaining-token counters are treated as client bookkeeping. The desktop launcher declares a 200K client compaction budget for custom cloud tiers; this does not pin their serving model or guarantee an upstream context limit.
 
 ## 🛠️ Tech Stack
 

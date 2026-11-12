@@ -7,6 +7,7 @@ use std::{collections::VecDeque, path::PathBuf, sync::Mutex, time::Duration};
 const RECENT_ERRORS: usize = 20;
 
 pub struct Upstream {
+    pub cloud: crate::cloud::Manager,
     pub client: Client,
     pub sessions: SessionManager,
     directory: models::Directory,
@@ -15,6 +16,7 @@ pub struct Upstream {
 impl Upstream {
     pub fn new(base: PathBuf) -> Result<Self> {
         Ok(Self {
+            cloud: crate::cloud::Manager::default(),
             client: Client::builder()
                 .connect_timeout(Duration::from_secs(15))
                 .read_timeout(Duration::from_secs(120))
@@ -34,9 +36,14 @@ impl Upstream {
         self.sessions = self.sessions.with_credential_file(path);
         self
     }
+    pub async fn last_cloud_model(&self) -> Option<crate::cloud::ModelObservation> {
+        let identity = self.sessions.catalog_identity().await.ok()?;
+        self.cloud.last_model(identity).await
+    }
+
     pub async fn models(&self, force: bool) -> models::Catalog {
         let identity = self.sessions.catalog_identity().await.ok();
-        let catalog =
+        let mut catalog =
             self.directory
                 .get(identity, force, || async {
                     tokio::time::timeout(Duration::from_secs(15), async {
@@ -77,6 +84,14 @@ impl Upstream {
                 .directory
                 .get(None, false, || async { unreachable!() })
                 .await;
+        }
+        if self
+            .sessions
+            .session(&self.client)
+            .await
+            .is_ok_and(|session| !session.managed_by_quick)
+        {
+            catalog.models.extend(crate::cloud::models());
         }
         catalog
     }
@@ -202,18 +217,79 @@ pub(crate) fn error_kind(status: u16) -> &'static str {
     }
 }
 
-pub async fn error_body(response: Response) -> (u16, Value, Option<String>) {
+pub async fn error_body(mut response: Response) -> (u16, Value, Option<String>) {
     let status = response.status().as_u16();
     let retry = response
         .headers()
         .get("retry-after")
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
-    let kind = error_kind(status);
-    // Never return arbitrary upstream bodies: they can contain request content.
-    (
-        status,
-        json!({"type":"error","error":{"type":kind,"message":format!("Quick upstream returned HTTP {status}. Check model, request options, login and quota with quickway doctor --online.")}}),
-        retry,
-    )
+    let code = response
+        .headers()
+        .get("x-amzn-errortype")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or(error_kind(status))
+        .to_owned();
+    // Error bodies can contain full request content or be arbitrarily large.
+    // Read a bounded JSON object and expose only scrubbed diagnostic fields.
+    const LIMIT: usize = 16 * 1024;
+    let mut bytes = Vec::new();
+    let payload = loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) if bytes.len() + chunk.len() <= LIMIT => {
+                bytes.extend_from_slice(&chunk)
+            }
+            Ok(None) => break serde_json::from_slice::<Value>(&bytes).ok(),
+            _ => break None,
+        }
+    };
+    let error = if let Some(payload) = payload.filter(Value::is_object) {
+        crate::model_error::ModelError::from_upstream(&code, &payload).event()
+    } else {
+        json!({"type":"error","error":{"type":error_kind(status),"message":format!("Quick upstream returned HTTP {status}; no readable error details were returned.")}})
+    };
+    (status, error, retry)
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn http_errors_keep_safe_details_and_retry_after() {
+        let response = axum::http::Response::builder().status(403)
+            .header("retry-after", "30")
+            .body(json!({"__type":"com.aws#AccessDeniedException", "message":"This client is not supported for this request.", "request":"private content"}).to_string())
+            .unwrap().into();
+        let (status, body, retry) = error_body(response).await;
+        assert_eq!(status, 403);
+        assert_eq!(retry.as_deref(), Some("30"));
+        assert_eq!(body["error"]["type"], "permission_error");
+        assert_eq!(body["error"]["code"], "AccessDeniedException");
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("This client is not supported")
+        );
+        assert!(!body.to_string().contains("private content"));
+    }
+
+    #[tokio::test]
+    async fn non_json_and_oversized_http_errors_never_echo_bodies() {
+        for body in [
+            "<html>secret</html>".to_owned(),
+            json!({"message":"secret ".repeat(3000)}).to_string(),
+        ] {
+            let response = axum::http::Response::builder()
+                .status(503)
+                .body(body)
+                .unwrap()
+                .into();
+            let (status, body, _) = error_body(response).await;
+            assert_eq!(status, 503);
+            assert_eq!(body["error"]["type"], "overloaded_error");
+            assert!(!body.to_string().contains("secret"));
+        }
+    }
 }
