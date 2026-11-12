@@ -177,6 +177,25 @@ const ru: Messages = {
   diagnosticsRunning: 'Создание отчёта…',
   diagnosticsCopied: 'Отчёт скопирован. Вставьте его в сообщение поддержке.',
 
+  // Updates
+  updateTitle: 'Обновления',
+  updateCurrent: 'Установлена версия v{version}.',
+  updateIntro: 'QuickWay проверяет новую версию при запуске и раз в день.',
+  updateChecking: 'Проверка обновлений…',
+  updateLatest: 'Актуальная версия',
+  updateAvailable: 'Доступна версия v{version}',
+  updateInstallBody: 'Загрузка проверяется ключом подписи QuickWay, затем локальный прокси останавливается, обновление устанавливается и QuickWay перезапускается.',
+  updateManualBody: 'Эта копия QuickWay не может обновить себя сама (портативная версия или запуск из образа диска). Скачайте новый установщик.',
+  updateCheckFailed: 'Не удалось проверить обновления: {error}',
+  updateCheck: 'Проверить обновления',
+  updateInstall: 'Установить и перезапустить',
+  updateDownload: 'Скачать новую версию',
+  updateDownloading: 'Загрузка обновления… {percent}%',
+  updateDownloadingUnknown: 'Загрузка обновления…',
+  updateInstalling: 'Установка, QuickWay скоро перезапустится…',
+  stopBeforeUpdate: 'Остановите текущий ответ перед установкой обновления.',
+  updateNotice: 'Доступна v{version}',
+
   // Credentials
   credentialSourceImported: 'Используются импортированные учётные данные. ',
   credentialSourceLocal: 'Используется локальный вход в Quick. ',

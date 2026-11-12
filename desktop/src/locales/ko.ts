@@ -177,6 +177,25 @@ const ko: Messages = {
   diagnosticsRunning: '진단 보고서 생성 중…',
   diagnosticsCopied: '진단 보고서를 복사했습니다. 그대로 붙여 넣어 보내세요',
 
+  // Updates
+  updateTitle: '업데이트',
+  updateCurrent: '현재 버전은 v{version}입니다.',
+  updateIntro: 'QuickWay는 시작할 때와 이후 하루에 한 번 새 버전을 확인합니다.',
+  updateChecking: '업데이트 확인 중…',
+  updateLatest: '최신 버전',
+  updateAvailable: 'v{version} 버전을 사용할 수 있습니다',
+  updateInstallBody: '다운로드한 파일은 QuickWay 서명 키로 검증한 뒤 로컬 프록시를 중지하고 업데이트를 설치한 다음 QuickWay를 다시 시작합니다.',
+  updateManualBody: '이 QuickWay는 스스로 교체할 수 없습니다(포터블 버전이거나 디스크 이미지에서 직접 실행). 새 설치 프로그램을 다운로드하세요.',
+  updateCheckFailed: '업데이트를 확인하지 못했습니다: {error}',
+  updateCheck: '업데이트 확인',
+  updateInstall: '설치 후 다시 시작',
+  updateDownload: '새 버전 다운로드',
+  updateDownloading: '업데이트 다운로드 중… {percent}%',
+  updateDownloadingUnknown: '업데이트 다운로드 중…',
+  updateInstalling: '설치 중입니다. QuickWay가 곧 다시 시작됩니다…',
+  stopBeforeUpdate: '업데이트를 설치하기 전에 현재 응답을 중지하세요.',
+  updateNotice: 'v{version} 사용 가능',
+
   // Credentials
   credentialSourceImported: '가져온 자격 증명을 사용 중입니다. ',
   credentialSourceLocal: '이 컴퓨터의 Quick 로그인을 사용 중입니다. ',

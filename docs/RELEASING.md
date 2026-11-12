@@ -8,14 +8,38 @@ When a new version reaches `main`, the workflow builds these packages from the s
 
 | Platform | Files |
 |----------|-------|
-| Windows x64 | `QuickWay_<version>_x64-setup.exe` (NSIS installer), `QuickWay_<version>_x64-portable.exe` |
-| macOS Apple Silicon | `QuickWay_<version>_aarch64.dmg` |
-| macOS Intel | `QuickWay_<version>_x64.dmg` |
+| Windows x64 | `QuickWay_<version>_x64-setup.exe` (NSIS installer) and its `.sig`, `QuickWay_<version>_x64-portable.exe` |
+| macOS Apple Silicon | `QuickWay_<version>_aarch64.dmg`, `QuickWay_<version>_aarch64.app.tar.gz` and its `.sig` |
+| macOS Intel | `QuickWay_<version>_x64.dmg`, `QuickWay_<version>_x64.app.tar.gz` and its `.sig` |
 
 Only the desktop app is released; the command-line proxy is built from source (`cargo build --release`).
 
 All platforms must succeed and identify the same commit before publication. Uploads go to a draft first; the
-release becomes public only after every file and `SHA256SUMS.txt` have been uploaded.
+release becomes public only after every file, `SHA256SUMS.txt` and `latest.json` have been uploaded.
+
+## In-app updates
+
+Installed copies check `releases/latest/download/latest.json` at launch and once a day. The manifest names each
+platform's update package (the NSIS installer on Windows, `.app.tar.gz` on macOS) and its signature. QuickWay
+downloads the package, verifies it against the public key in `desktop/src-tauri/tauri.conf.json`
+(`plugins.updater.pubkey`), stops the local proxy, installs and restarts. The portable Windows exe and an app run
+from the mounted DMG cannot replace themselves; they show a link to the release page instead. A copy older than the
+first version with the updater must be updated by hand once.
+
+Update packages are signed in CI with two repository secrets, `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The build stops if either the secret or the public key is missing. Pull
+requests from forks receive no secrets, so their build jobs fail; verification still runs.
+
+The private key and its password are kept outside the repository (the maintainer's copy is in `~/.tauri/`). Back
+them up: if they are lost, already installed copies cannot accept any new update and must be reinstalled by hand
+after a new key is configured. To replace the key:
+
+1. `cd desktop && npm run tauri signer generate -- -w ~/.tauri/quickway.key`
+2. Put the contents of `~/.tauri/quickway.key.pub` in `plugins.updater.pubkey`.
+3. `gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/quickway.key` and set the password the same way.
+
+Local builds (`npm run tauri build`, `scripts/Build-Windows.ps1`) do not create update packages and need no key;
+CI adds them with `--config src-tauri/tauri.updater.conf.json`.
 
 ## Publish the next version
 
@@ -35,7 +59,7 @@ Only stable `major.minor.patch` versions are published, and a new version must b
 ## Distribution scope
 
 This publishes downloadable installers on GitHub Releases. Windows installers are not Authenticode-signed; macOS
-builds use ad-hoc signing and are not notarized. No signing secrets are needed for this workflow.
+builds use ad-hoc signing and are not notarized. The only secrets are the update-signing key described above.
 
 The workflow pins action revisions and the Rust toolchain (`rust-toolchain.toml`); npm and Cargo lockfiles are
 committed. Never add account credentials or local application configuration to the repository or release assets.

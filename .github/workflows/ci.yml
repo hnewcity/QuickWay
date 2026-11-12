@@ -113,11 +113,11 @@ jobs:
           - platform: darwin-aarch64
             os: macos-15
             target: aarch64-apple-darwin
-            bundles: dmg
+            bundles: app,dmg
           - platform: darwin-x86_64
             os: macos-15-intel
             target: x86_64-apple-darwin
-            bundles: dmg
+            bundles: app,dmg
     defaults:
       run:
         shell: bash
@@ -143,9 +143,17 @@ jobs:
           key: build-${{ matrix.platform }}
       - name: Build desktop installers
         working-directory: desktop
+        # Update packages are signed so installed apps accept only builds from this repository.
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::The TAURI_SIGNING_PRIVATE_KEY secret is missing; see docs/RELEASING.md."
+            exit 1
+          fi
           npm ci --no-audit --no-fund
-          npm run tauri -- build --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} -- --locked
+          npm run tauri -- build --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.updater.conf.json -- --locked
       - name: Collect installers and build metadata
         run: python scripts/release.py collect ${{ matrix.platform }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

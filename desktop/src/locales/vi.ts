@@ -177,6 +177,25 @@ const vi: Messages = {
   diagnosticsRunning: 'Đang tạo chẩn đoán…',
   diagnosticsCopied: 'Đã sao chép chẩn đoán. Hãy dán để gửi hỗ trợ.',
 
+  // Updates
+  updateTitle: 'Cập nhật',
+  updateCurrent: 'Bạn đang dùng v{version}.',
+  updateIntro: 'QuickWay kiểm tra phiên bản mới khi khởi động và mỗi ngày một lần.',
+  updateChecking: 'Đang kiểm tra cập nhật…',
+  updateLatest: 'Đã là bản mới nhất',
+  updateAvailable: 'Đã có phiên bản v{version}',
+  updateInstallBody: 'Bản tải về được xác minh bằng khóa ký của QuickWay, sau đó proxy cục bộ dừng lại, bản cập nhật được cài đặt và QuickWay khởi động lại.',
+  updateManualBody: 'Bản QuickWay này không thể tự thay thế (bản portable hoặc chạy trực tiếp từ ảnh đĩa). Hãy tải trình cài đặt mới.',
+  updateCheckFailed: 'Không kiểm tra được cập nhật: {error}',
+  updateCheck: 'Kiểm tra cập nhật',
+  updateInstall: 'Cài đặt và khởi động lại',
+  updateDownload: 'Tải phiên bản mới',
+  updateDownloading: 'Đang tải bản cập nhật… {percent}%',
+  updateDownloadingUnknown: 'Đang tải bản cập nhật…',
+  updateInstalling: 'Đang cài đặt; QuickWay sẽ khởi động lại…',
+  stopBeforeUpdate: 'Hãy dừng câu trả lời hiện tại trước khi cài đặt bản cập nhật.',
+  updateNotice: 'Có v{version}',
+
   // Credentials
   credentialSourceImported: 'Đang dùng thông tin xác thực đã nhập. ',
   credentialSourceLocal: 'Đang dùng đăng nhập Quick trên máy. ',

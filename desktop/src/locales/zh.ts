@@ -177,6 +177,25 @@ const zh = {
   diagnosticsRunning: '正在生成诊断报告…',
   diagnosticsCopied: '诊断报告已复制，可直接粘贴发送',
 
+  // Updates
+  updateTitle: '版本更新',
+  updateCurrent: '当前版本 v{version}。',
+  updateIntro: 'QuickWay 会在启动时和之后每天检查一次新版本。',
+  updateChecking: '正在检查更新…',
+  updateLatest: '已是最新',
+  updateAvailable: '新版本 v{version} 可用',
+  updateInstallBody: '下载后会用 QuickWay 的签名公钥校验，然后停止本地代理、安装更新并重启 QuickWay。',
+  updateManualBody: '这份 QuickWay 无法自我替换（便携版或直接从磁盘映像运行），请下载新版安装包。',
+  updateCheckFailed: '检查更新失败：{error}',
+  updateCheck: '检查更新',
+  updateInstall: '安装并重启',
+  updateDownload: '下载新版',
+  updateDownloading: '正在下载更新… {percent}%',
+  updateDownloadingUnknown: '正在下载更新…',
+  updateInstalling: '正在安装，QuickWay 即将重启…',
+  stopBeforeUpdate: '请先停止当前回复，再安装更新。',
+  updateNotice: 'v{version} 可更新',
+
   // Credentials
   credentialSourceImported: '当前使用导入凭证。',
   credentialSourceLocal: '当前使用本机 Quick 登录。',

@@ -19,6 +19,8 @@ type Usage = { monthlyUsage?: { availableUnits?: number; provisionedUnits?: numb
 type Message = { id: string; role: 'user' | 'assistant'; content: string; model?: string; servedModel?: string; thinkingEffort?: ThinkingEffort; error?: string; interrupted?: boolean; input?: number; output?: number };
 type Conversation = { id: string; title: string; model: string; thinkingEffort?: ThinkingEffort; messages: Message[]; updated: number };
 type ChatEvent = { type: 'delta'; text: string } | { type: 'model'; served: string } | { type: 'usage'; input: number; output: number } | { type: 'done'; reason: string } | { type: 'cancelled' } | { type: 'error'; message: string };
+type UpdateInfo = { current: string; version: string | null; notes: string | null; installable: boolean; url: string };
+type UpdateEvent = { type: 'progress'; downloaded: number; total: number | null } | { type: 'installing' };
 
 const isMac = /Mac/.test(navigator.platform);
 // Matches the native window configs: macOS overlays its traffic lights, Windows has no system frame.
@@ -50,6 +52,7 @@ const icons: Record<string, string> = {
   eyeOff: '<path d="M3 3l18 18M10.6 5.1A10.6 10.6 0 0 1 12 5c6.4 0 10 7 10 7a17.8 17.8 0 0 1-3.2 4.2M6.6 6.6C3.9 8.4 2 12 2 12s3.6 7 10 7a9.9 9.9 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3Z"/>',
   external: '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+  download: '<path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/>',
 };
 const icon = (name: string, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] || icons.chat}</svg>`;
 // Little Q, the selected monochrome app mark (design/icon).
@@ -166,6 +169,7 @@ function renderShell() {
     <footer class="sidebar-ending">
       <button class="connection-summary" id="connection-summary"><i class="status-dot" id="sidebar-dot"></i><span><strong id="sidebar-status">${t('connecting')}</strong><small id="sidebar-endpoint">${t('readingLogin')}</small></span>${icon('arrow')}</button>
       <svg class="wordmark" viewBox="0 0 200 46" role="img" aria-label="QuickWay"><text x="1" y="37" textLength="198" lengthAdjust="spacingAndGlyphs">QuickWay</text></svg>
+      <button class="update-notice" id="update-notice" data-open-updates hidden>${icon('download')}<span></span></button>
       <label class="language-picker" title="${t('language')}">${icon('globe')}<select id="language" aria-label="${t('language')}">${languages.map(l => `<option value="${l.code}" ${l.code === language() ? 'selected' : ''}>${l.label}</option>`).join('')}</select></label>
       <div class="sidebar-note" title="${backgroundNote()}"><span id="version">v${escape(status?.version || '0.3.0')}</span> · ${backgroundNote()}</div>
     </footer>
@@ -182,6 +186,7 @@ function renderShell() {
   el('new-chat')!.onclick = newConversation;
   el('connection-summary')!.onclick = () => { view = 'dashboard'; renderView(); };
   el<HTMLSelectElement>('language')!.onchange = e => changeLanguage((e.target as HTMLSelectElement).value as Language);
+  syncUpdate();
   if (isWindows) void syncMaximized();
 }
 
@@ -496,6 +501,77 @@ async function copyDiagnostics() {
   finally { diagnosing = false; }
 }
 
+let updateInfo: UpdateInfo | null = null;
+let updateError = '';
+let checkingUpdate = false;
+// Null until an install starts; total stays null when the server sends no length.
+let updateProgress: { downloaded: number; total: number | null; installing: boolean } | null = null;
+const updateAvailable = () => !!updateInfo?.version;
+function updateStateText() {
+  if (updateProgress?.installing) return t('updateInstalling');
+  if (updateProgress) return updateProgress.total ? t('updateDownloading', { percent: Math.min(100, Math.floor(updateProgress.downloaded / updateProgress.total * 100)) }) : t('updateDownloadingUnknown');
+  if (checkingUpdate) return t('updateChecking');
+  if (updateError) return t('updateCheckFailed', { error: updateError });
+  if (updateAvailable()) return t('updateAvailable', { version: updateInfo!.version! });
+  return '';
+}
+function updateHtml() {
+  const busy = checkingUpdate || !!updateProgress;
+  const state = updateStateText();
+  const available = updateAvailable();
+  const next = available ? `${updateInfo!.notes ? `<div class="update-notes">${escape(updateInfo!.notes)}</div>` : ''}<p>${t(updateInfo!.installable ? 'updateInstallBody' : 'updateManualBody')}</p>` : '';
+  const primary = !available ? '' : updateInfo!.installable
+    ? `<button class="pill pill-ink" data-install-update ${updateProgress ? 'disabled' : ''}>${icon('download')}${t('updateInstall')}</button>`
+    : `<button class="pill pill-ink" data-download-update>${icon('external')}${t('updateDownload')}</button>`;
+  return `${state ? `<p class="update-state" role="status">${escape(state)}</p>` : ''}${next}
+    <div class="credential-actions">${primary}<button class="pill pill-outline" data-check-update ${busy ? 'disabled' : ''}>${icon('refresh', checkingUpdate ? 'spin' : '')}${t('updateCheck')}</button></div>`;
+}
+function syncUpdate() {
+  const content = el('update-content');
+  if (content) content.innerHTML = updateHtml();
+  const badge = el('update-badge');
+  if (badge) {
+    badge.hidden = !updateInfo;
+    badge.className = `badge ${updateAvailable() ? 'on' : ''}`;
+    badge.textContent = updateAvailable() ? t('updateNotice', { version: updateInfo!.version! }) : t('updateLatest');
+  }
+  const notice = el('update-notice');
+  if (notice) {
+    notice.hidden = !updateAvailable();
+    notice.querySelector('span')!.textContent = updateAvailable() ? t('updateNotice', { version: updateInfo!.version! }) : '';
+  }
+}
+async function checkUpdate(manual = false) {
+  if (checkingUpdate || updateProgress) return;
+  checkingUpdate = true;
+  syncUpdate();
+  try {
+    updateInfo = await invoke<UpdateInfo>('check_update');
+    updateError = '';
+    if (manual) toast(updateInfo.version ? t('updateAvailable', { version: updateInfo.version }) : t('updateLatest'));
+  } catch (error) {
+    // Background checks stay quiet; the Settings page still shows why the last check failed.
+    updateError = String(error);
+    if (manual) toast(t('updateCheckFailed', { error: updateError }), true);
+  } finally { checkingUpdate = false; syncUpdate(); }
+}
+async function installUpdate() {
+  if (updateProgress || !updateInfo?.installable || !updateAvailable()) return;
+  if (activeRequest) { toast(t('stopBeforeUpdate'), true); return; }
+  updateProgress = { downloaded: 0, total: null, installing: false };
+  syncUpdate();
+  const channel = new Channel<UpdateEvent>();
+  channel.onmessage = event => {
+    if (!updateProgress) return;
+    if (event.type === 'progress') updateProgress = { downloaded: event.downloaded, total: event.total, installing: false };
+    else updateProgress.installing = true;
+    syncUpdate();
+  };
+  // On success the app exits and restarts, so only a failure returns here.
+  try { await invoke('install_update', { onEvent: channel }); }
+  catch (error) { updateProgress = null; toast(String(error), true); syncUpdate(); void refreshStatus(); }
+}
+
 async function credentialAction(mode: string) {
   if (credentialBusy) return;
   if (activeRequest) { toast(t('stopBeforeCredentials'), true); return; }
@@ -687,12 +763,17 @@ function renderSettings() {
       <p>${t('diagnosticsBody')}</p>
       <div class="credential-actions"><button class="pill pill-outline" data-diagnostics>${icon('copy')}${t('copyDiagnostics')}</button></div>
     </section>
+    <section class="scene update-settings"><div class="panel-title"><h2>${t('updateTitle')}</h2><span class="badge" id="update-badge" hidden></span></div>
+      <p>${t('updateCurrent', { version: escape(status!.version) })} ${t('updateIntro')}</p>
+      <div id="update-content">${updateHtml()}</div>
+    </section>
     <p class="catalog-help">${t('catalogHelp')}</p>
     <section class="faq"><div class="faq-rail"><span class="eyebrow">Questions</span><h2>${t('faqTitle')}</h2>${figure('q', 'faq-figure')}</div><div class="faq-list">${faqHtml()}</div></section>
     </div></div>`;
   el<HTMLInputElement>('port')!.onchange = async e => { const port = Number((e.target as HTMLInputElement).value); if (!Number.isInteger(port) || port < 1024 || port > 65535) { toast(t('portRange'), true); return; } try { await savePrefs({ port }); const endpoint = document.querySelector('.endpoint-row code'); if (endpoint) endpoint.textContent = `http://127.0.0.1:${port}`; } catch {} };
   el<HTMLInputElement>('auto-start')!.onchange = async e => { try { await savePrefs({ autoStart: (e.target as HTMLInputElement).checked }); } catch { renderSettings(); } };
   el('copy-key')!.onclick = () => void action('copy_connection', { keyOnly: true }, t('apiKeyCopied')).catch(() => {});
+  syncUpdate();
 }
 
 function renderView() {
@@ -868,6 +949,10 @@ document.addEventListener('click', e => {
   if (target.closest('[data-refresh-models]')) void refreshModels();
   if (target.closest('[data-retry-usage]')) void refreshUsage(true);
   if (target.closest('[data-diagnostics]')) void copyDiagnostics();
+  if (target.closest('[data-check-update]')) void checkUpdate(true);
+  if (target.closest('[data-open-updates]')) { view = 'settings'; renderView(); el('update-content')?.closest('section')?.scrollIntoView({ block: 'center' }); }
+  if (target.closest('[data-install-update]')) void installUpdate();
+  if (target.closest('[data-download-update]') && updateInfo) void action('open_external', { url: updateInfo.url }).catch(() => {});
   if (target.closest('[data-copy-codex-config]')) void pendingPreferences.then(() => action('copy_codex_config', undefined, t('codexConfigCopied'))).catch(() => {});
   if (target.closest('[data-copy-connection]')) void pendingPreferences.then(() => action('copy_connection', { keyOnly: false }, t('terminalConfigCopied', { terminal: terminalName() }))).catch(() => {});
   if (target.closest('[data-open-quick]')) void action('open_quick').catch(() => {});
@@ -940,3 +1025,5 @@ syncTray();
 await refreshStatus();
 renderView();
 setInterval(() => void refreshStatus(), 7000);
+void checkUpdate();
+setInterval(() => void checkUpdate(), 24 * 60 * 60 * 1000);

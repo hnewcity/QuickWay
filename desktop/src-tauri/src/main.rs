@@ -22,6 +22,7 @@ use tauri::{
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_opener::OpenerExt;
+use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::{Mutex as AsyncMutex, oneshot};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -548,6 +549,82 @@ fn open_external(app: tauri::AppHandle, url: String) -> std::result::Result<(), 
         .map_err(|_| "无法打开链接。".into())
 }
 
+const RELEASES_URL: &str = "https://github.com/hnewcity/QuickWay/releases/latest";
+
+/// Self-update replaces the installed app in place. The portable Windows exe, an app run from the
+/// mounted DMG or a translocated quarantine copy cannot be replaced, so those get a download link.
+fn replaceable_install(exe: &Path, windows: bool) -> bool {
+    if windows {
+        return exe
+            .parent()
+            .is_some_and(|dir| dir.join("uninstall.exe").is_file());
+    }
+    let path = exe.to_string_lossy();
+    path.contains(".app/Contents/MacOS/")
+        && !path.starts_with("/Volumes/")
+        && !path.contains("/AppTranslocation/")
+}
+
+fn self_update_supported() -> bool {
+    !cfg!(debug_assertions)
+        && (cfg!(target_os = "windows") || cfg!(target_os = "macos"))
+        && std::env::current_exe()
+            .is_ok_and(|exe| replaceable_install(&exe, cfg!(target_os = "windows")))
+}
+
+async fn pending_update(
+    app: &tauri::AppHandle,
+) -> std::result::Result<Option<tauri_plugin_updater::Update>, String> {
+    app.updater()
+        .map_err(|e| e.to_string())?
+        .check()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn check_update(app: tauri::AppHandle) -> std::result::Result<Value, String> {
+    let update = pending_update(&app).await?;
+    Ok(json!({
+        "current": env!("CARGO_PKG_VERSION"),
+        "version": update.as_ref().map(|update| update.version.clone()),
+        "notes": update.and_then(|update| update.body),
+        "installable": self_update_supported(),
+        "url": RELEASES_URL,
+    }))
+}
+
+/// Downloads and verifies the signed update while the proxy keeps serving, then stops the proxy and
+/// installs. Windows hands over to the installer, which restarts the app; macOS relaunches here.
+#[tauri::command]
+async fn install_update(
+    app: tauri::AppHandle,
+    state: State<'_, Desktop>,
+    on_event: Channel<Value>,
+) -> std::result::Result<(), String> {
+    if !self_update_supported() {
+        return Err("此版本不能自动更新，请下载新版安装包。".into());
+    }
+    let update = pending_update(&app)
+        .await?
+        .ok_or("已经是最新版本。")?;
+    let mut downloaded = 0u64;
+    let bytes = update
+        .download(
+            |chunk, total| {
+                downloaded += chunk as u64;
+                let _ = on_event.send(json!({"type":"progress", "downloaded":downloaded, "total":total}));
+            },
+            || {},
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let _ = on_event.send(json!({"type":"installing"}));
+    state.stop().await;
+    update.install(bytes).map_err(|e| e.to_string())?;
+    app.restart()
+}
+
 #[tauri::command]
 async fn launch_claude(state: State<'_, Desktop>) -> std::result::Result<(), String> {
     let preferences = state.preferences();
@@ -799,6 +876,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             std::fs::create_dir_all(&config_dir)?;
@@ -901,6 +979,8 @@ fn main() {
             copy_text,
             set_tray_language,
             open_external,
+            check_update,
+            install_update,
             import_cc_switch,
             api_key,
             launch_claude,
@@ -924,6 +1004,26 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_installed_copies_update_themselves() {
+        let dir = std::env::temp_dir().join(format!("quickway-update-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("quickway-desktop.exe");
+        assert!(!replaceable_install(&exe, true), "portable exe has no uninstaller");
+        std::fs::write(dir.join("uninstall.exe"), b"").unwrap();
+        assert!(replaceable_install(&exe, true));
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        let app = "QuickWay.app/Contents/MacOS/quickway-desktop";
+        assert!(replaceable_install(Path::new(&format!("/Applications/{app}")), false));
+        assert!(!replaceable_install(Path::new(&format!("/Volumes/QuickWay/{app}")), false));
+        assert!(!replaceable_install(
+            Path::new(&format!("/private/var/folders/x/AppTranslocation/1/d/{app}")),
+            false
+        ));
+        assert!(!replaceable_install(Path::new("/usr/local/bin/quickway-desktop"), false));
+    }
 
     #[test]
     fn chat_model_uses_served_metadata_and_never_the_requested_or_resolved_label() {

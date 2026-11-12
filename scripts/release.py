@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -143,15 +144,27 @@ def expected_assets(platform: str, version: str) -> list[tuple[str, str, str]]:
     """List (kind, build output relative to the repository, release asset name) for one platform."""
     desktop_release = f"{TAURI}/target/{PLATFORMS[platform]}/release"
     if platform.startswith("windows"):
+        installer = f"{desktop_release}/bundle/nsis/QuickWay_{version}_x64-setup.exe"
         return [
-            ("installer", f"{desktop_release}/bundle/nsis/QuickWay_{version}_x64-setup.exe",
-             f"QuickWay_{version}_x64-setup.exe"),
+            ("installer", installer, f"QuickWay_{version}_x64-setup.exe"),
+            ("update signature", f"{installer}.sig", f"QuickWay_{version}_x64-setup.exe.sig"),
             ("portable", f"{desktop_release}/quickway-desktop.exe", f"QuickWay_{version}_x64-portable.exe"),
         ]
     arch = "aarch64" if platform == "darwin-aarch64" else "x64"
+    # Both architectures build the update archive under the same name, so the asset name carries the arch.
+    archive = f"{desktop_release}/bundle/macos/QuickWay.app.tar.gz"
     return [
         ("installer", f"{desktop_release}/bundle/dmg/QuickWay_{version}_{arch}.dmg", f"QuickWay_{version}_{arch}.dmg"),
+        ("update", archive, f"QuickWay_{version}_{arch}.app.tar.gz"),
+        ("update signature", f"{archive}.sig", f"QuickWay_{version}_{arch}.app.tar.gz.sig"),
     ]
+
+
+def update_package(platform: str, version: str) -> str:
+    """Name the release asset the in-app updater installs; its signature is the same name plus .sig."""
+    if platform.startswith("windows"):
+        return f"QuickWay_{version}_x64-setup.exe"
+    return f"QuickWay_{version}_{'aarch64' if platform == 'darwin-aarch64' else 'x64'}.app.tar.gz"
 
 
 def digest(path: Path) -> str:
@@ -163,6 +176,9 @@ def digest(path: Path) -> str:
 def collect(platform: str, sha: str, root: Path = ROOT) -> None:
     """Collect the platform's desktop packages with source-commit and checksum metadata."""
     version = validate(root)
+    # Installed apps verify updates with the key compiled into them; shipping without one strands them.
+    if not read_json(root / TAURI / "tauri.conf.json").get("plugins", {}).get("updater", {}).get("pubkey"):
+        raise ValueError("Set plugins.updater.pubkey in tauri.conf.json before building releases (docs/RELEASING.md)")
     destination = root / "release-assets" / platform
     destination.mkdir(parents=True, exist_ok=True)
     files = []
@@ -200,6 +216,22 @@ def verify_assets(directory: Path, version: str, sha: str) -> list[Path]:
     return [*files.values(), checksum_file]
 
 
+def update_manifest(directory: Path, version: str, repository: str, notes: str, published: str) -> Path:
+    """Write latest.json, which installed apps poll through the latest release's download URL."""
+    platforms = {}
+    for platform in PLATFORMS:
+        package = update_package(platform, version)
+        signature = (directory / f"{package}.sig").read_text(encoding="utf-8").strip()
+        if not signature:
+            raise ValueError(f"Missing update signature for {platform}")
+        platforms[platform] = {"signature": signature,
+                               "url": f"https://github.com/{repository}/releases/download/v{version}/{package}"}
+    manifest = directory / "latest.json"
+    manifest.write_text(json.dumps({"version": version, "notes": notes.strip(), "pub_date": published,
+                                    "platforms": platforms}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return manifest
+
+
 def publish(directory: Path) -> None:
     """Upload a complete release as a draft, then make it public after every upload succeeds."""
     version = validate()
@@ -209,6 +241,10 @@ def publish(directory: Path) -> None:
         print("This version is already published; leaving it unchanged.")
         return
     tag = f"v{version}"
+    published = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    notes = (ROOT / "releases" / f"{tag}.md").read_text(encoding="utf-8")
+    # The manifest is only reachable as "latest" once the draft below becomes public.
+    assets.append(update_manifest(directory, version, repository, notes, published))
     release = gh_json(f"repos/{repository}/releases/tags/{tag}")
     common = ["--repo", repository]
     if not release:

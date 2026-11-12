@@ -30,7 +30,8 @@ class ReleaseTests(unittest.TestCase):
         (self.root / "releases").mkdir()
         self.put("desktop/package.json", '{\n  "name": "quickway-desktop",\n  "version": "0.3.0"\n}\n')
         self.put("desktop/package-lock.json", NPM_LOCK)
-        self.put("desktop/src-tauri/tauri.conf.json", '{\n  "productName": "QuickWay",\n  "version": "0.3.0"\n}\n')
+        self.put("desktop/src-tauri/tauri.conf.json", '{\n  "productName": "QuickWay",\n  "version": "0.3.0",\n'
+                 '  "plugins": {"updater": {"pubkey": "synthetic-public-key"}}\n}\n')
         self.put("Cargo.toml", '[package]\nname = "quickway"\nversion = "0.3.0"\n\n[dependencies]\nserde = "1"\n')
         self.put("desktop/src-tauri/Cargo.toml", '[package]\nname = "quickway-desktop"\nversion = "0.3.0"\n')
         self.put("Cargo.lock", LOCK)
@@ -92,14 +93,43 @@ class ReleaseTests(unittest.TestCase):
     def test_complete_artifacts_generate_checksums(self) -> None:
         merged = self.installers()
         files = release.verify_assets(merged, "0.3.0", SHA)
-        self.assertEqual(len(files), 5)
+        self.assertEqual(len(files), 10)
         checksums = (merged / "SHA256SUMS.txt").read_text(encoding="utf-8").splitlines()
-        self.assertEqual(len(checksums), 4)
+        self.assertEqual(len(checksums), 9)
         names = {line.split("  ")[1] for line in checksums}
         self.assertIn("QuickWay_0.3.0_x64-setup.exe", names)
+        self.assertIn("QuickWay_0.3.0_x64-setup.exe.sig", names)
         self.assertIn("QuickWay_0.3.0_aarch64.dmg", names)
         self.assertIn("QuickWay_0.3.0_x64.dmg", names)
+        self.assertIn("QuickWay_0.3.0_aarch64.app.tar.gz", names)
+        self.assertIn("QuickWay_0.3.0_x64.app.tar.gz.sig", names)
         self.assertIn("QuickWay_0.3.0_x64-portable.exe", names)
+
+    def test_update_manifest_points_every_platform_at_its_signed_package(self) -> None:
+        merged = self.installers()
+        release.verify_assets(merged, "0.3.0", SHA)
+        path = release.update_manifest(merged, "0.3.0", "owner/repo", "First release.\n", "2026-11-12T08:00:00Z")
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual((manifest["version"], manifest["notes"], manifest["pub_date"]),
+                         ("0.3.0", "First release.", "2026-11-12T08:00:00Z"))
+        self.assertEqual(set(manifest["platforms"]), set(release.PLATFORMS))
+        base = "https://github.com/owner/repo/releases/download/v0.3.0/"
+        self.assertEqual(manifest["platforms"]["windows-x86_64"],
+                         {"signature": "synthetic QuickWay_0.3.0_x64-setup.exe.sig",
+                          "url": base + "QuickWay_0.3.0_x64-setup.exe"})
+        self.assertEqual(manifest["platforms"]["darwin-x86_64"]["url"], base + "QuickWay_0.3.0_x64.app.tar.gz")
+        self.assertEqual(manifest["platforms"]["darwin-aarch64"]["signature"], "synthetic QuickWay.app.tar.gz.sig")
+
+    def test_empty_update_signature_blocks_the_manifest(self) -> None:
+        merged = self.installers()
+        (merged / "QuickWay_0.3.0_aarch64.app.tar.gz.sig").write_text("\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "signature"):
+            release.update_manifest(merged, "0.3.0", "owner/repo", "Notes", "2026-11-12T08:00:00Z")
+
+    def test_missing_updater_key_blocks_collection(self) -> None:
+        self.put("desktop/src-tauri/tauri.conf.json", '{\n  "version": "0.3.0",\n  "plugins": {"updater": {"pubkey": ""}}\n}\n')
+        with self.assertRaisesRegex(ValueError, "pubkey"):
+            release.collect("windows-x86_64", SHA, self.root)
 
     def test_only_desktop_packages_are_released(self) -> None:
         merged = self.installers()

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "QuickWay",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "identifier": "dev.quickway.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -45,6 +45,17 @@
         "languages": [
           "SimpChinese"
         ]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIxMTIwMjFDRENGQUZGODEKUldTQi8vcmNIQUlTSWFmWHNGMTdaZWZYb3l5YlZYNXRabGg4bnVTNnNpdWdtbVpLYlBrSE0wN1QK",
+      "endpoints": [
+        "https://github.com/hnewcity/QuickWay/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

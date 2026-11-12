@@ -177,6 +177,25 @@ const ja: Messages = {
   diagnosticsRunning: '診断レポートを生成中…',
   diagnosticsCopied: '診断レポートをコピーしました。そのまま貼り付けて送れます',
 
+  // Updates
+  updateTitle: 'アップデート',
+  updateCurrent: '現在のバージョンは v{version} です。',
+  updateIntro: 'QuickWay は起動時と、その後 1 日 1 回新しいバージョンを確認します。',
+  updateChecking: 'アップデートを確認しています…',
+  updateLatest: '最新です',
+  updateAvailable: 'v{version} が利用できます',
+  updateInstallBody: 'ダウンロードは QuickWay の署名鍵で検証され、その後ローカルプロキシを停止してアップデートをインストールし、QuickWay を再起動します。',
+  updateManualBody: 'この QuickWay は自身を置き換えられません（ポータブル版、またはディスクイメージから直接実行）。新しいインストーラーをダウンロードしてください。',
+  updateCheckFailed: 'アップデートを確認できませんでした: {error}',
+  updateCheck: 'アップデートを確認',
+  updateInstall: 'インストールして再起動',
+  updateDownload: '新しいバージョンをダウンロード',
+  updateDownloading: 'アップデートをダウンロード中… {percent}%',
+  updateDownloadingUnknown: 'アップデートをダウンロード中…',
+  updateInstalling: 'インストール中です。QuickWay はまもなく再起動します…',
+  stopBeforeUpdate: 'アップデートをインストールする前に、現在の応答を停止してください。',
+  updateNotice: 'v{version} が利用可能',
+
   // Credentials
   credentialSourceImported: 'インポートした資格情報を使用しています。',
   credentialSourceLocal: 'このコンピュータの Quick サインインを使用しています。',

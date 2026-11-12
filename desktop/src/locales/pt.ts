@@ -177,6 +177,25 @@ const pt: Messages = {
   diagnosticsRunning: 'Gerando diagnóstico…',
   diagnosticsCopied: 'Diagnóstico copiado. Cole para o suporte.',
 
+  // Updates
+  updateTitle: 'Atualizações',
+  updateCurrent: 'Você está usando a v{version}.',
+  updateIntro: 'O QuickWay procura uma nova versão ao abrir e uma vez por dia.',
+  updateChecking: 'Procurando atualizações…',
+  updateLatest: 'Atualizado',
+  updateAvailable: 'A versão v{version} está disponível',
+  updateInstallBody: 'O download é verificado com a chave de assinatura do QuickWay; depois o proxy local para, a atualização é instalada e o QuickWay reinicia.',
+  updateManualBody: 'Esta cópia do QuickWay não pode se substituir (versão portátil ou executada da imagem de disco). Baixe o novo instalador.',
+  updateCheckFailed: 'Não foi possível procurar atualizações: {error}',
+  updateCheck: 'Procurar atualizações',
+  updateInstall: 'Instalar e reiniciar',
+  updateDownload: 'Baixar nova versão',
+  updateDownloading: 'Baixando atualização… {percent}%',
+  updateDownloadingUnknown: 'Baixando atualização…',
+  updateInstalling: 'Instalando; o QuickWay vai reiniciar…',
+  stopBeforeUpdate: 'Pare a resposta atual antes de instalar a atualização.',
+  updateNotice: 'v{version} disponível',
+
   // Credentials
   credentialSourceImported: 'Usando credenciais importadas. ',
   credentialSourceLocal: 'Usando o login local do Quick. ',

@@ -177,6 +177,25 @@ const id: Messages = {
   diagnosticsRunning: 'Membuat diagnostik…',
   diagnosticsCopied: 'Diagnostik disalin. Tempelkan untuk dukungan.',
 
+  // Updates
+  updateTitle: 'Pembaruan',
+  updateCurrent: 'Versi saat ini v{version}.',
+  updateIntro: 'QuickWay memeriksa versi baru saat dibuka dan sekali sehari.',
+  updateChecking: 'Memeriksa pembaruan…',
+  updateLatest: 'Sudah terbaru',
+  updateAvailable: 'Versi v{version} tersedia',
+  updateInstallBody: 'Unduhan diverifikasi dengan kunci tanda tangan QuickWay, lalu proxy lokal dihentikan, pembaruan dipasang, dan QuickWay dimulai ulang.',
+  updateManualBody: 'Salinan QuickWay ini tidak dapat mengganti dirinya sendiri (versi portabel atau dijalankan dari image disk). Unduh installer baru.',
+  updateCheckFailed: 'Gagal memeriksa pembaruan: {error}',
+  updateCheck: 'Periksa pembaruan',
+  updateInstall: 'Pasang dan mulai ulang',
+  updateDownload: 'Unduh versi baru',
+  updateDownloading: 'Mengunduh pembaruan… {percent}%',
+  updateDownloadingUnknown: 'Mengunduh pembaruan…',
+  updateInstalling: 'Memasang; QuickWay akan dimulai ulang…',
+  stopBeforeUpdate: 'Hentikan balasan saat ini sebelum memasang pembaruan.',
+  updateNotice: 'v{version} tersedia',
+
   // Credentials
   credentialSourceImported: 'Menggunakan kredensial yang diimpor. ',
   credentialSourceLocal: 'Menggunakan login Quick lokal. ',

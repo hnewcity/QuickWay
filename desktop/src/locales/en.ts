@@ -177,6 +177,25 @@ const en: Messages = {
   diagnosticsRunning: 'Generating diagnostics…',
   diagnosticsCopied: 'Diagnostics copied. Paste it to support.',
 
+  // Updates
+  updateTitle: 'Updates',
+  updateCurrent: 'You are running v{version}.',
+  updateIntro: 'QuickWay checks for a new version at launch and once a day.',
+  updateChecking: 'Checking for updates…',
+  updateLatest: 'Up to date',
+  updateAvailable: 'Version v{version} is available',
+  updateInstallBody: 'The download is verified against the QuickWay signing key, then the local proxy stops, the update installs and QuickWay restarts.',
+  updateManualBody: 'This copy of QuickWay cannot replace itself (portable build or run from the disk image). Download the new installer instead.',
+  updateCheckFailed: 'Could not check for updates: {error}',
+  updateCheck: 'Check for updates',
+  updateInstall: 'Install and restart',
+  updateDownload: 'Download new version',
+  updateDownloading: 'Downloading update… {percent}%',
+  updateDownloadingUnknown: 'Downloading update…',
+  updateInstalling: 'Installing; QuickWay will restart…',
+  stopBeforeUpdate: 'Stop the current reply before installing the update.',
+  updateNotice: 'v{version} available',
+
   // Credentials
   credentialSourceImported: 'Using imported credentials. ',
   credentialSourceLocal: 'Using the local Quick sign-in. ',

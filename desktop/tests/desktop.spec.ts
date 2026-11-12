@@ -97,6 +97,15 @@ test.beforeEach(async ({ page }, info) => {
           case 'stop_proxy': running = false; return;
           case 'copy_text': w.copied = args.text; return;
           case 'diagnostics': if (w.diagnosticsError) throw w.diagnosticsError; return '{"report":"quickway.diagnostics"}';
+          case 'check_update':
+            if (w.updateError) throw w.updateError;
+            return { current: '0.3.0', version: null, notes: null, installable: true, url: 'https://github.com/hnewcity/QuickWay/releases/latest', ...w.update };
+          case 'install_update':
+            if (w.installError) throw w.installError;
+            // A real install exits the app, so the call never settles; tests drive the channel from here.
+            w.updateChannel = args.onEvent;
+            args.onEvent.onmessage({ type: 'progress', downloaded: 512, total: 2048 });
+            return new Promise<void>(() => {});
           case 'set_tray_language': w.tray = structuredClone(args); return;
           case 'chat':
             if (args.messages.at(-1).content === 'hold') {
@@ -759,6 +768,54 @@ test('diagnostics report is copied from a usage error and from settings', async 
   await page.locator('.diagnostics-settings [data-diagnostics]').click();
   await expect(page.locator('#toast')).toContainText('生成失败');
   expect(await page.evaluate(() => (window as any).copied)).toBeUndefined();
+});
+
+test('an available update is announced and installs with progress', async ({ page }) => {
+  await page.locator('[data-view="settings"]').click();
+  await expect(page.locator('#update-badge')).toHaveText(zh.updateLatest);
+  await expect(page.locator('#update-notice')).toBeHidden();
+  await page.evaluate(() => { (window as any).update = { version: '0.5.0', notes: '新功能 <b>粗体</b>' }; });
+  await page.locator('[data-check-update]').click();
+  await expect(page.locator('#update-notice')).toContainText('v0.5.0');
+  // Release notes are shown as text, never as markup.
+  await expect(page.locator('.update-notes')).toHaveText('新功能 <b>粗体</b>');
+  await expect(page.locator('.update-settings')).toContainText(zh.updateInstallBody);
+  await page.locator('[data-view="chat"]').click();
+  await page.locator('#update-notice').click();
+  await expect(page.locator('[data-view="settings"]')).toHaveAttribute('aria-current', 'page');
+  await page.locator('[data-install-update]').click();
+  await expect(page.locator('.update-state')).toHaveText(zh.updateDownloading.replace('{percent}', '25'));
+  await expect(page.locator('[data-install-update]')).toBeDisabled();
+  await expect(page.locator('[data-check-update]')).toBeDisabled();
+  await page.evaluate(() => (window as any).updateChannel.onmessage({ type: 'installing' }));
+  await expect(page.locator('.update-state')).toHaveText(zh.updateInstalling);
+});
+
+test('a copy that cannot replace itself links to the release page', async ({ page }) => {
+  await page.evaluate(() => { (window as any).update = { version: '0.5.0', installable: false }; });
+  await page.locator('[data-view="settings"]').click();
+  await page.locator('[data-check-update]').click();
+  await expect(page.locator('.update-settings')).toContainText(zh.updateManualBody);
+  await expect(page.locator('[data-install-update]')).toHaveCount(0);
+  await page.locator('[data-download-update]').click();
+  await expect.poll(() => page.evaluate(() => (window as any).opened)).toBe('https://github.com/hnewcity/QuickWay/releases/latest');
+});
+
+test('update check failures stay quiet at launch and are reported on request', async ({ page }) => {
+  await page.addInitScript(() => { (window as any).updateError = '网络不可用'; });
+  await page.reload();
+  await expect(page.locator('.status-word')).toHaveText('运行中');
+  await expect(page.locator('#toast')).not.toHaveClass(/visible/);
+  await page.locator('[data-view="settings"]').click();
+  const failed = zh.updateCheckFailed.replace('{error}', '网络不可用');
+  await expect(page.locator('.update-state')).toHaveText(failed);
+  await page.locator('[data-check-update]').click();
+  await expect(page.locator('#toast')).toContainText(failed);
+  await page.evaluate(() => { const w = window as any; w.updateError = undefined; w.update = { version: '0.5.0' }; w.installError = '签名校验失败'; });
+  await page.locator('[data-check-update]').click();
+  await page.locator('[data-install-update]').click();
+  await expect(page.locator('#toast')).toContainText('签名校验失败');
+  await expect(page.locator('[data-install-update]')).toBeEnabled();
 });
 
 test('missing usage percentages stay unknown while real zero and remaining units are shown', async ({ page }) => {
