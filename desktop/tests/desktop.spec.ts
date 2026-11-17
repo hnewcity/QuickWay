@@ -126,7 +126,7 @@ test.beforeEach(async ({ page }, info) => {
           case 'copy_codex_config': w.codexConfigCopies = (w.codexConfigCopies || 0) + 1; return;
           case 'copy_connection': return;
           case 'api_key': return 'fixture-key';
-          case 'import_cc_switch': if (w.ccSwitchMissing) throw '没有找到 CC Switch。请先安装 CC Switch，再点导入。'; w.ccSwitchImports = (w.ccSwitchImports || 0) + 1; return;
+          case 'import_cc_switch': if (w.ccSwitchMissing) throw '没有找到 CC Switch。请先安装 CC Switch，再点导入。'; w.ccSwitchImports = (w.ccSwitchImports || 0) + 1; w.ccSwitchModel = args.model; return;
           case 'open_external': w.opened = args.url; return;
           case 'plugin:event|listen': listeners.push({ event: args.event, handler: args.handler }); return args.handler;
           case 'plugin:event|unlisten': return;
@@ -626,12 +626,29 @@ test('CC Switch import waits for a pending model save and reports a missing app'
   expect(await page.evaluate(() => (window as any).ccSwitchImports)).toBeUndefined();
   await page.evaluate(() => { (window as any).releasePreferences(); (window as any).delayPreferenceSaves = false; });
   await expect.poll(() => page.evaluate(() => (window as any).ccSwitchImports)).toBe(1);
+  expect(await page.evaluate(() => (window as any).ccSwitchModel)).toBe('quick-advanced');
   await expect(page.locator('#toast')).toContainText('请在弹出的窗口里确认导入');
   await page.evaluate(() => { (window as any).ccSwitchMissing = true; });
   await page.locator('[data-import-ccswitch]').click();
   await expect(page.locator('#toast')).toContainText('没有找到 CC Switch');
   await page.locator('[data-open-ccswitch-site]').click();
   await expect.poll(() => page.evaluate(() => (window as any).opened)).toBe('https://github.com/farion1231/cc-switch');
+});
+
+test('CC Switch import picks a tier itself when no valid default is saved', async ({ page }) => {
+  await page.addInitScript(() => { (window as any).preferences.model = 'claude-sonnet-5-5'; });
+  await page.reload();
+  await expect(page.locator('[data-ccswitch-model]')).toHaveText(zh.ccAutoModel.replace('{model}', 'quick-smart'));
+  await page.locator('[data-import-ccswitch]').click();
+  await expect.poll(() => page.evaluate(() => (window as any).ccSwitchModel)).toBe('quick-smart');
+  // The import does not overwrite the saved default.
+  expect(await page.evaluate(() => (window as any).preferences.model)).toBe('claude-sonnet-5-5');
+  // Without Smart in the catalog, the first available tier is used.
+  await page.evaluate(() => { const w = window as any; w.nextModels = w.models.filter((m: any) => m.id !== 'quick-smart'); });
+  await page.locator('[data-refresh-models]').click();
+  await expect(page.locator('[data-ccswitch-model]')).toHaveText(zh.ccAutoModel.replace('{model}', 'quick-advanced'));
+  await page.locator('[data-import-ccswitch]').click();
+  await expect.poll(() => page.evaluate(() => (window as any).ccSwitchModel)).toBe('quick-advanced');
 });
 
 test('conversation history only shows on the chat test page', async ({ page }) => {
@@ -690,6 +707,27 @@ test('successful empty cloud refresh removes all available choices and blocks st
   await expect(page.locator('[data-import-ccswitch]')).toBeDisabled();
   await expect(page.locator('[data-copy-example]')).toBeDisabled();
   expect(await page.evaluate(() => (window as any).calls.some((c: any) => c.command === 'chat' || c.command === 'launch_claude'))).toBe(false);
+});
+
+test('missing cloud tiers show the reason instead of a synced empty catalog and recover on refresh', async ({ page }) => {
+  const reason = '云端档位暂不可用：Quick token refresh could not reach AWS; check the network and try again';
+  await page.addInitScript(reason => {
+    const w = window as any;
+    w.fullModels = w.models;
+    w.models = [{ id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', family: 'Anthropic', upstream: 'fixture' }];
+    w.modelCatalog = { source: 'cloud', lastUpdated: 1, error: reason };
+  }, reason);
+  await page.reload();
+  await expect(page.locator('[data-model-count]')).toHaveText('0');
+  await expect(page.locator('.models-card [data-model-summary]')).toHaveText(zh.catalogSummary.replace('{count}', '0').replace('{state}', zh.catalogTiersUnavailable));
+  await expect(page.locator('[data-model-reason]')).toHaveText(reason);
+  await expect(page.locator('[data-import-ccswitch]')).toBeDisabled();
+  await page.evaluate(() => { const w = window as any; w.nextModels = w.fullModels; });
+  await page.locator('[data-refresh-models]').click();
+  await expect(page.locator('[data-model-count]')).toHaveText('2');
+  await expect(page.locator('.models-card [data-model-summary]')).toContainText(zh.catalogSynced);
+  await expect(page.locator('[data-model-reason]')).toBeHidden();
+  await expect(page.locator('[data-import-ccswitch]')).toBeEnabled();
 });
 
 test('an empty saved selection survives unavailable cloud data and recovers on refresh', async ({ page }) => {

@@ -51,6 +51,7 @@ const ja: Messages = {
   catalogSynced: '同期済み',
   catalogCache: '更新に失敗したため、前回のカタログを使用中',
   catalogNone: 'クラウドのカタログをまだ取得していません',
+  catalogTiersUnavailable: 'クラウドのモードは利用できません',
   catalogAutoUpdate: 'モード一覧は 5 分ごとに自動更新されます',
   catalogUpdated: 'モードカタログを更新しました（{count} 件）',
   refreshModels: 'モードを更新',
@@ -231,6 +232,7 @@ const ja: Messages = {
   ccImport: 'CC Switch にインポート',
   ccHelp: 'CC Switch に、ローカルアドレスであることを示す確認ウィンドウが表示されます。確認してインポートしてください。まだインストールしていませんか？',
   ccDownload: 'CC Switch をダウンロード ↗',
+  ccAutoModel: '{model}（自動選択）',
   ccOpened: 'CC Switch を開きました。表示されたウィンドウでインポートを確認してください。',
 
   // Dashboard

@@ -51,6 +51,7 @@ const en: Messages = {
   catalogSynced: 'Synced',
   catalogCache: 'Refresh failed, using the last catalog',
   catalogNone: 'Cloud catalog not loaded yet',
+  catalogTiersUnavailable: 'Cloud tiers unavailable',
   catalogAutoUpdate: 'The tier list updates every 5 minutes',
   catalogUpdated: 'Tier catalog updated: {count} tiers',
   refreshModels: 'Refresh tiers',
@@ -231,6 +232,7 @@ const en: Messages = {
   ccImport: 'Import into CC Switch',
   ccHelp: 'CC Switch opens a confirmation window noting this is a local address. Confirm to import. Not installed yet?',
   ccDownload: 'Download CC Switch ↗',
+  ccAutoModel: '{model} (chosen automatically)',
   ccOpened: 'CC Switch opened. Confirm the import in its window.',
 
   // Dashboard

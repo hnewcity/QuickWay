@@ -1,6 +1,6 @@
 [package]
 name = "quickway-desktop"
-version = "0.4.1"
+version = "0.4.2"
 description = "QuickWay desktop chat and Claude Code bridge"
 authors = ["QuickWay"]
 license = "MIT"

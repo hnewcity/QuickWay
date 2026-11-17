@@ -51,6 +51,7 @@ const ru: Messages = {
   catalogSynced: 'Синхронизировано',
   catalogCache: 'Не удалось обновить, используется прошлый каталог',
   catalogNone: 'Облачный каталог ещё не загружен',
+  catalogTiersUnavailable: 'Облачные режимы недоступны',
   catalogAutoUpdate: 'Список режимов обновляется каждые 5 минут',
   catalogUpdated: 'Каталог режимов обновлён, всего режимов: {count}',
   refreshModels: 'Обновить режимы',
@@ -231,6 +232,7 @@ const ru: Messages = {
   ccImport: 'Импортировать в CC Switch',
   ccHelp: 'CC Switch покажет окно подтверждения и отметит, что это локальный адрес. Подтвердите импорт. Ещё не установлен?',
   ccDownload: 'Скачать CC Switch ↗',
+  ccAutoModel: '{model} (выбран автоматически)',
   ccOpened: 'CC Switch открыт. Подтвердите импорт в его окне.',
 
   // Dashboard

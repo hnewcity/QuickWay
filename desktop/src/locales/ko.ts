@@ -51,6 +51,7 @@ const ko: Messages = {
   catalogSynced: '동기화됨',
   catalogCache: '새로 고침 실패, 마지막 목록 사용 중',
   catalogNone: '클라우드 목록을 아직 불러오지 않았습니다',
+  catalogTiersUnavailable: '클라우드 모드를 사용할 수 없음',
   catalogAutoUpdate: '모드 목록은 5분마다 자동으로 업데이트됩니다',
   catalogUpdated: '모드 목록을 업데이트했습니다. 모드 {count}개',
   refreshModels: '모드 새로 고침',
@@ -231,6 +232,7 @@ const ko: Messages = {
   ccImport: 'CC Switch로 가져오기',
   ccHelp: 'CC Switch에 로컬 주소라는 안내와 함께 확인 창이 표시됩니다. 확인하면 가져오기가 진행됩니다. 아직 설치하지 않으셨나요?',
   ccDownload: 'CC Switch 다운로드 ↗',
+  ccAutoModel: '{model} (자동 선택)',
   ccOpened: 'CC Switch를 열었습니다. 표시된 창에서 가져오기를 확인하세요.',
 
   // Dashboard

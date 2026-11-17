@@ -51,6 +51,7 @@ const zh = {
   catalogSynced: '已同步',
   catalogCache: '刷新失败，沿用上次目录',
   catalogNone: '尚未获取云端目录',
+  catalogTiersUnavailable: '云端档位暂不可用',
   catalogAutoUpdate: '档位列表每 5 分钟自动更新',
   catalogUpdated: '档位目录已更新，共 {count} 个档位',
   refreshModels: '刷新档位',
@@ -231,6 +232,7 @@ const zh = {
   ccImport: '导入到 CC Switch',
   ccHelp: 'CC Switch 会弹出确认窗口，并提示这是本机地址，确认导入即可。还没安装？',
   ccDownload: '下载 CC Switch ↗',
+  ccAutoModel: '{model}（自动选择）',
   ccOpened: '已打开 CC Switch，请在弹出的窗口里确认导入',
 
   // Dashboard

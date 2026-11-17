@@ -284,8 +284,13 @@ fn cc_switch_link(preferences: &Preferences, key: &str) -> String {
 async fn import_cc_switch(
     app: tauri::AppHandle,
     state: State<'_, Desktop>,
+    model: Option<String>,
 ) -> std::result::Result<(), String> {
-    let preferences = state.preferences();
+    // The dashboard picks a tier when no valid default is saved; the saved default is left as it is.
+    let mut preferences = state.preferences();
+    if let Some(model) = model.filter(|model| !model.is_empty()) {
+        preferences.model = model;
+    }
     state
         .app
         .upstream

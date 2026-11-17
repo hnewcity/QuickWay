@@ -51,6 +51,7 @@ const pt: Messages = {
   catalogSynced: 'Sincronizado',
   catalogCache: 'Falha ao atualizar, usando o último catálogo',
   catalogNone: 'Catálogo da nuvem ainda não carregado',
+  catalogTiersUnavailable: 'Níveis na nuvem indisponíveis',
   catalogAutoUpdate: 'A lista de níveis é atualizada a cada 5 minutos',
   catalogUpdated: 'Catálogo de níveis atualizado: {count} níveis',
   refreshModels: 'Atualizar níveis',
@@ -231,6 +232,7 @@ const pt: Messages = {
   ccImport: 'Importar para o CC Switch',
   ccHelp: 'O CC Switch abre uma janela de confirmação informando que o endereço é local. Confirme para importar. Ainda não instalou?',
   ccDownload: 'Baixar o CC Switch ↗',
+  ccAutoModel: '{model} (escolhido automaticamente)',
   ccOpened: 'CC Switch aberto. Confirme a importação na janela dele.',
 
   // Dashboard

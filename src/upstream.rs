@@ -85,14 +85,8 @@ impl Upstream {
                 .get(None, false, || async { unreachable!() })
                 .await;
         }
-        if self
-            .sessions
-            .session(&self.client)
-            .await
-            .is_ok_and(|session| !session.managed_by_quick)
-        {
-            catalog.models.extend(crate::cloud::models());
-        }
+        let session = self.sessions.session(&self.client).await;
+        add_cloud_tiers(&mut catalog, session.as_ref());
         catalog
     }
     pub async fn post(&self, path: &str, body: &Value) -> Result<Response> {
@@ -155,6 +149,19 @@ impl Upstream {
 }
 
 /// Headers every Quick App Integrations call carries, matching Quick's own client.
+/// The cloud tiers are not part of Quick's directory. The directory is cached, so
+/// it can look synced while the session behind it fails; report why the tiers are
+/// missing instead of returning an apparently complete, empty choice.
+fn add_cloud_tiers(catalog: &mut models::Catalog, session: Result<&auth::QuickSession, &anyhow::Error>) {
+    match session {
+        Ok(session) if !session.managed_by_quick => catalog.models.extend(crate::cloud::models()),
+        Ok(_) => {
+            catalog.error = Some("Quick 云端档位目前只支持个人（social/AIDP）登录，当前是企业登录。".into())
+        }
+        Err(error) => catalog.error = Some(format!("云端档位暂不可用：{error}")),
+    }
+}
+
 pub(crate) fn authorized(client: &Client, url: Url, bearer: &str) -> reqwest::RequestBuilder {
     client
         .post(url)
@@ -254,6 +261,35 @@ pub async fn error_body(mut response: Response) -> (u16, Value, Option<String>) 
 #[cfg(test)]
 mod error_tests {
     use super::*;
+
+    #[test]
+    fn missing_cloud_tiers_report_why_instead_of_an_empty_synced_catalog() {
+        let synced = || models::Catalog {
+            source: "cloud",
+            last_updated: Some(1),
+            ..models::Catalog::default()
+        };
+        let tiers = |catalog: &models::Catalog| -> Vec<String> {
+            catalog.models.iter().map(|model| model.id.clone()).collect()
+        };
+
+        let mut social = synced();
+        add_cloud_tiers(&mut social, Ok(&crate::portable::tests::fixture(false)));
+        assert_eq!(tiers(&social), ["quick-fast", "quick-balanced", "quick-smart", "quick-advanced"]);
+        assert_eq!(social.error, None);
+
+        let mut enterprise = synced();
+        add_cloud_tiers(&mut enterprise, Ok(&crate::portable::tests::fixture(true)));
+        assert!(enterprise.models.is_empty());
+        assert!(enterprise.error.unwrap().contains("企业登录"));
+
+        let mut failed = synced();
+        let error = anyhow::anyhow!("Quick token refresh could not reach AWS; check the network and try again");
+        add_cloud_tiers(&mut failed, Err(&error));
+        assert!(failed.models.is_empty());
+        assert_eq!(failed.source, "cloud");
+        assert!(failed.error.unwrap().contains("could not reach AWS"));
+    }
 
     #[tokio::test]
     async fn http_errors_keep_safe_details_and_retry_after() {

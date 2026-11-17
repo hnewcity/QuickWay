@@ -51,6 +51,7 @@ const vi: Messages = {
   catalogSynced: 'Đã đồng bộ',
   catalogCache: 'Làm mới thất bại, đang dùng danh mục lần trước',
   catalogNone: 'Chưa tải danh mục trên đám mây',
+  catalogTiersUnavailable: 'Chế độ đám mây không khả dụng',
   catalogAutoUpdate: 'Danh sách chế độ tự cập nhật mỗi 5 phút',
   catalogUpdated: 'Đã cập nhật danh mục chế độ: {count} chế độ',
   refreshModels: 'Làm mới chế độ',
@@ -231,6 +232,7 @@ const vi: Messages = {
   ccImport: 'Nhập vào CC Switch',
   ccHelp: 'CC Switch sẽ mở cửa sổ xác nhận và nhắc rằng đây là địa chỉ cục bộ. Hãy xác nhận để nhập. Chưa cài đặt?',
   ccDownload: 'Tải CC Switch ↗',
+  ccAutoModel: '{model} (tự động chọn)',
   ccOpened: 'Đã mở CC Switch. Hãy xác nhận việc nhập trong cửa sổ của nó.',
 
   // Dashboard

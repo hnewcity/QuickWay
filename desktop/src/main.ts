@@ -99,7 +99,10 @@ type CodingTool = 'claude' | 'codex';
 let codingTool: CodingTool = localStorage.getItem('quickway.codingTool') === 'codex' ? 'codex' : 'claude';
 const tierKeys: Record<string, MessageKey> = { 'quick-fast': 'tierFast', 'quick-balanced': 'tierBalanced', 'quick-smart': 'tierSmart', 'quick-advanced': 'tierAdvanced' };
 const availableModels = () => Object.keys(tierKeys).flatMap(id => status?.models.find(m => m.id === id) || []);
-const modelName = (id?: string) => id && Object.hasOwn(tierKeys, id) ? t(tierKeys[id]) : t('chooseModel');
+// CC Switch import does not need a saved default: without a valid one it takes Smart, or the first available tier.
+const ccSwitchModel = () => hasSelectedModel() ? status!.preferences.model : (availableModels().find(m => m.id === 'quick-smart') || availableModels()[0])?.id || '';
+const ccSwitchModelText = () => { const model = ccSwitchModel(); return !model ? t('notSelected') : hasSelectedModel() ? model : t('ccAutoModel', { model }); };
+const modelName = (id?: string) =>id && Object.hasOwn(tierKeys, id) ? t(tierKeys[id]) : t('chooseModel');
 const modelMark = (_id: string) => '◇';
 const validServedModel = (id: unknown): id is string => typeof id === 'string' && id.length > 0 && id.length <= 512 && /^[a-zA-Z0-9._:/-]+$/.test(id) && !id.includes('://');
 function servedModelName(id: string) {
@@ -237,6 +240,7 @@ function chrome() {
     if (notice.innerHTML !== content) notice.innerHTML = content;
   }
   document.querySelectorAll<HTMLElement>('[data-model-summary]').forEach(e => { e.textContent = catalogSummary(); e.title = status!.modelCatalog?.error || t('catalogAutoUpdate'); });
+  document.querySelectorAll<HTMLElement>('[data-model-reason]').forEach(e => { e.textContent = missingTiersReason(); e.hidden = !e.textContent; });
   document.querySelectorAll<HTMLButtonElement>('[data-authorize-quick]').forEach(e => { e.disabled = authorizing; });
   document.querySelectorAll<HTMLButtonElement>('[data-refresh-models]').forEach(e => { e.disabled = refreshingModels; });
   document.querySelectorAll<HTMLElement>('[data-recent-model]').forEach(e => { const content = recentModelHtml(); if (e.innerHTML !== content) e.innerHTML = content; });
@@ -244,7 +248,9 @@ function chrome() {
   if (launch) launch.disabled = !claudeReady();
   const launchCodex = el<HTMLButtonElement>('launch-codex');
   if (launchCodex) launchCodex.disabled = !codexReady();
-  document.querySelectorAll<HTMLButtonElement>('[data-import-ccswitch], [data-copy-example], [data-copy-connection]').forEach(e => { e.disabled = !hasSelectedModel(); });
+  document.querySelectorAll<HTMLButtonElement>('[data-copy-example], [data-copy-connection]').forEach(e => { e.disabled = !hasSelectedModel(); });
+  document.querySelectorAll<HTMLButtonElement>('[data-import-ccswitch]').forEach(e => { e.disabled = !ccSwitchModel(); });
+  document.querySelectorAll<HTMLElement>('[data-ccswitch-model]').forEach(e => { e.textContent = ccSwitchModelText(); });
   document.querySelectorAll<HTMLElement>('[data-proxy-label]').forEach(e => e.textContent = t(status!.running ? 'running' : 'stopped'));
   document.querySelectorAll<HTMLElement>('[data-proxy-state]').forEach(e => e.classList.toggle('is-running', status!.running));
   document.querySelectorAll<HTMLElement>('[data-model-count]').forEach(e => e.textContent = String(availableModels().length));
@@ -261,7 +267,12 @@ function loginNotice() {
 
 function catalogSummary() {
   const source = status?.modelCatalog?.source;
-  return t('catalogSummary', { count: availableModels().length, state: t(refreshingModels ? 'catalogRefreshing' : source === 'cloud' ? 'catalogSynced' : source === 'cache' ? 'catalogCache' : 'catalogNone') });
+  return t('catalogSummary', { count: availableModels().length, state: t(refreshingModels ? 'catalogRefreshing' : missingTiersReason() ? 'catalogTiersUnavailable' : source === 'cloud' ? 'catalogSynced' : source === 'cache' ? 'catalogCache' : 'catalogNone') });
+}
+// A loaded directory without tiers has a reason (session failure, unsupported login); never call it synced.
+function missingTiersReason() {
+  const catalog = status?.modelCatalog;
+  return !availableModels().length && (catalog?.source === 'cloud' || catalog?.source === 'cache') ? catalog.error || '' : '';
 }
 // Model and thinking effort share one picker: a pill that opens a single popover with the effort levels
 // on top and the model list below, so both choices are one click away.
@@ -705,8 +716,8 @@ function ccSwitchHtml() {
   const shownKey = revealKey && apiKey ? apiKey : maskedKey;
   return `<div class="ccswitch-top">${figure('plug', 'ccswitch-figure')}<div><span class="eyebrow">CC Switch</span><h2>${t('ccTitle')}</h2></div></div>
     <p class="ccswitch-copy">${t('ccBody')}</p>
-    <dl class="import-preview"><div><dt>${t('ccProvider')}</dt><dd>QuickWay</dd></div><div><dt>${t('ccAddress')}</dt><dd>${escape(baseUrl())}</dd></div><div><dt>${t('apiKey')}</dt><dd>${escape(shownKey)}</dd></div><div><dt>${t('defaultModel')}</dt><dd>${escape(hasSelectedModel() ? status!.preferences.model : t('notSelected'))}</dd></div></dl>
-    <button class="pill pill-ink ccswitch-import" data-import-ccswitch ${hasSelectedModel() ? '' : 'disabled'}>${icon('external')}${t('ccImport')}</button>
+    <dl class="import-preview"><div><dt>${t('ccProvider')}</dt><dd>QuickWay</dd></div><div><dt>${t('ccAddress')}</dt><dd>${escape(baseUrl())}</dd></div><div><dt>${t('apiKey')}</dt><dd>${escape(shownKey)}</dd></div><div><dt>${t('defaultModel')}</dt><dd data-ccswitch-model>${escape(ccSwitchModelText())}</dd></div></dl>
+    <button class="pill pill-ink ccswitch-import" data-import-ccswitch ${ccSwitchModel() ? '' : 'disabled'}>${icon('external')}${t('ccImport')}</button>
     <p class="field-help">${t('ccHelp')} <button class="text-button" data-open-ccswitch-site>${t('ccDownload')}</button></p>`;
 }
 
@@ -723,7 +734,7 @@ function renderDashboard() {
       <section class="status-card ${status!.running ? 'is-running' : ''}" data-proxy-state><span class="eyebrow">${t('localProxy')}</span><strong class="status-word" data-proxy-label>${t(status!.running ? 'running' : 'stopped')}</strong><div class="endpoint-row"><code>${escape(baseUrl())}</code><button class="pill pill-outline pill-small" data-copy-base>${icon('copy')}${t('copyAddress')}</button><button class="text-button" id="copy-key">${t('copyApiKey')}</button></div><p class="status-note">${t('sharedEndpoint')}</p>${figure('plug', 'status-figure')}</section>
       <div class="bento-stack">
         <section class="scene port-summary"><span class="eyebrow">${t('listenPort')}</span><strong class="port-big">${prefs.port}</strong><p>${t('localOnly')}</p><button class="text-button" data-go="settings">${t('changePort')}</button></section>
-        <section class="models-card"><div class="models-top"><span class="eyebrow">${t('modelCatalog')}</span><strong data-model-count>${availableModels().length}</strong></div><p data-model-summary>${escape(catalogSummary())}</p><div class="models-actions"><button class="pill pill-paper pill-small" data-toggle-models aria-expanded="${showModels}" aria-controls="model-list">${t(showModels ? 'hideModels' : 'showModelIds')}</button><button class="icon-button on-ink" data-refresh-models title="${t('refreshModels')}" aria-label="${t('refreshModels')}">${icon('refresh')}</button></div></section>
+        <section class="models-card"><div class="models-top"><span class="eyebrow">${t('modelCatalog')}</span><strong data-model-count>${availableModels().length}</strong></div><p data-model-summary>${escape(catalogSummary())}</p><p class="models-reason" data-model-reason ${missingTiersReason() ? '' : 'hidden'}>${escape(missingTiersReason())}</p><div class="models-actions"><button class="pill pill-paper pill-small" data-toggle-models aria-expanded="${showModels}" aria-controls="model-list">${t(showModels ? 'hideModels' : 'showModelIds')}</button><button class="icon-button on-ink" data-refresh-models title="${t('refreshModels')}" aria-label="${t('refreshModels')}">${icon('refresh')}</button></div></section>
       </div>
       <section class="scene model-list" id="model-list" ${showModels ? '' : 'hidden'}>${modelListHtml()}</section>
       <section class="scene recent-model" data-recent-model role="status">${recentModelHtml()}</section>
@@ -994,7 +1005,7 @@ document.addEventListener('click', e => {
   if (importButton) {
     importButton.disabled = true;
     // A model picked a moment ago must be saved before the link is built from preferences.
-    void pendingPreferences.then(() => action('import_cc_switch', undefined, t('ccOpened'))).catch(() => {}).finally(() => { if (importButton.isConnected) importButton.disabled = false; });
+    void pendingPreferences.then(() => action('import_cc_switch', { model: ccSwitchModel() }, t('ccOpened'))).catch(() => {}).finally(() => { if (importButton.isConnected) importButton.disabled = false; });
   }
   if (target.closest('[data-open-ccswitch-site]')) void action('open_external', { url: 'https://github.com/farion1231/cc-switch' }).catch(() => {});
   const faq = target.closest<HTMLElement>('[data-faq]');

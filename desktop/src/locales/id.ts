@@ -51,6 +51,7 @@ const id: Messages = {
   catalogSynced: 'Tersinkron',
   catalogCache: 'Gagal menyegarkan, memakai katalog terakhir',
   catalogNone: 'Katalog cloud belum dimuat',
+  catalogTiersUnavailable: 'Mode cloud tidak tersedia',
   catalogAutoUpdate: 'Daftar mode diperbarui setiap 5 menit',
   catalogUpdated: 'Katalog mode diperbarui: {count} mode',
   refreshModels: 'Segarkan mode',
@@ -231,6 +232,7 @@ const id: Messages = {
   ccImport: 'Impor ke CC Switch',
   ccHelp: 'CC Switch membuka jendela konfirmasi yang menyebut ini alamat lokal. Konfirmasi untuk mengimpor. Belum terpasang?',
   ccDownload: 'Unduh CC Switch ↗',
+  ccAutoModel: '{model} (dipilih otomatis)',
   ccOpened: 'CC Switch dibuka. Konfirmasi impor di jendelanya.',
 
   // Dashboard
