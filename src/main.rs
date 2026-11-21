@@ -85,7 +85,8 @@ async fn main() -> Result<()> {
             });
             let listener = tokio::net::TcpListener::bind(listen).await?;
             eprintln!(
-                "QuickWay listening on http://{listen}; local key file: {}",
+                "QuickWay listening on http://{}; local key file: {}",
+                listener.local_addr()?,
                 key_file.display()
             );
             axum::serve(listener, server::router(app.clone()))

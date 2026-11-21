@@ -106,7 +106,7 @@ Use an ID returned by `GET /v1/models`. New desktop installations default to `qu
 | `quick-smart` | `smart` (recommended default) |
 | `quick-advanced` | `advanced` |
 
-These IDs select Quick's cloud agent modes. Quick chooses the concrete model. The cloud route currently supports social/AIDP sign-ins; enterprise/gateway sign-ins are not supported by this route.
+These IDs select Quick's cloud agent modes. They are gateway routes, not a per-account entitlement check. If Advanced is absent from your Amazon Quick mode picker, select a tier available there, such as Smart. Quick chooses the concrete model. The cloud route currently supports social/AIDP sign-ins; enterprise/gateway sign-ins are not supported by this route.
 
 The legacy fixed-model route can return `AccessDeniedException: This client is not supported for this request.` A successful sign-in or model catalog fetch does not establish inference access. Fixed IDs remain in the API catalog, while desktop pickers show only cloud tiers. Saved fixed-model selections require an explicit tier choice.
 
@@ -211,6 +211,7 @@ These explicit, opt-in checks use synthetic prompts and fixtures with `quick-sma
 ```sh
 cargo run --example smoke_cloud -- messages
 cargo run --example smoke_cloud -- openai
+cargo run --example smoke_cloud -- parallel-tools
 cargo run --example smoke_cloud -- history
 cargo run --example smoke_cloud -- claude
 cargo run --example smoke_cloud -- claude-normal
@@ -223,6 +224,7 @@ cargo run --example smoke_cloud -- codex-recovery
 |---|---|
 | `messages` | Messages text, streaming and automatic tool round-trips |
 | `openai` | Chat Completions and Responses text, streaming and tools; requires the Python OpenAI SDK (`python -m pip install openai`) |
+| `parallel-tools` | Two concurrent clients (Chat Completions and streaming Responses) use identically named tools. Each must receive its own arguments and result; requires the Python OpenAI SDK. |
 | `history` | Completed text/tool history rebuilding, multiple tool calls, follow-ups and cancellation |
 | `claude` | Requires an installed `claude` CLI; enables only its `Read` tool to read a synthetic file in a temporary directory |
 | `claude-normal` | Loads normal Claude Code settings and the full default tool catalog; allows `Read` to read the synthetic fixture |

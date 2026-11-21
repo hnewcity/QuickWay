@@ -47,7 +47,9 @@ fn authorized(headers: &HeaderMap, key: &str) -> bool {
             headers
                 .get("authorization")
                 .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
+                .and_then(|v| v.split_once(' '))
+                .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
+                .map(|(_, token)| token.trim_start_matches(' '))
         })
         .unwrap_or("");
     let mut diff = provided.len() ^ key.len();
@@ -410,6 +412,17 @@ mod tests {
         let mut h = HeaderMap::new();
         assert!(!authorized(&h, "fixture-key"));
         h.insert("authorization", "Bearer fixture-key".parse().unwrap());
+        assert!(authorized(&h, "fixture-key"));
+        for value in [
+            "Basic fixture-key",
+            "Bearerfixture-key",
+            "Bearer FIXTURE-KEY",
+            "Bearer fixture-key extra",
+        ] {
+            h.insert("authorization", value.parse().unwrap());
+            assert!(!authorized(&h, "fixture-key"));
+        }
+        h.insert("authorization", "bearer   fixture-key".parse().unwrap());
         assert!(authorized(&h, "fixture-key"));
         h.insert("x-api-key", "wrong".parse().unwrap());
         assert!(!authorized(&h, "fixture-key"));

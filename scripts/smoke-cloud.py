@@ -49,7 +49,7 @@ def main():
 
     tools = [{'name': 'echo', 'description': 'Return the given synthetic text.',
               'input_schema': {'type': 'object', 'properties': {'text': {'type': 'string'}}, 'required': ['text']}}]
-    messages = [{'role': 'user', 'content': 'Call the echo tool twice: once with text FIRST, once with text SECOND. You may call them in parallel. Then quote both exact returned values. Use only the echo tool on the QuickWay API session device.'}]
+    messages = [{'role': 'user', 'content': 'Call the echo tool twice: once with text FIRST, once with text SECOND. You may call them in parallel. Then quote both exact returned values. Use only the echo tool registered for this request on this client’s device.'}]
     calls = []
     for _ in range(8):
         result = send(messages, tools=tools)

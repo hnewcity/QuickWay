@@ -204,7 +204,7 @@ fn upstream_error(headers: &Headers<'_>, body: &[u8]) -> Result<ModelError, Mode
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn string_header(name: &str, value: &str) -> Vec<u8> {
@@ -244,7 +244,7 @@ mod tests {
         )
     }
 
-    fn event_frame(event: &Value) -> Vec<u8> {
+    pub(crate) fn event_frame(event: &Value) -> Vec<u8> {
         inner_frame(event.to_string().as_bytes())
     }
 

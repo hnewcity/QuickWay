@@ -8,7 +8,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const CLOUD_LIMIT_NOTICE: &str = "Quick cloud controls generation limits; max_tokens is retained for diagnostics but is not an upstream hard cap.";
 
-pub(crate) const CLOUD_OUTPOST_NAME: &str = "QuickWay API session";
+/// Quick exposes tools under the *display name* of the device, not its UUID.
+/// Derive a stable namespace for this conversation, including cold history imports.
+/// A fixed name lets identical tools from other idle sessions shadow the live callback.
+pub(crate) fn outpost_name(thread: &str) -> String {
+    let digest = format!("{:x}", Sha256::digest(thread.as_bytes()));
+    format!("QuickWay {}", &digest[..16])
+}
+
 const CLIENT_PRESENTATION: &str = "\n\n# QuickWay API client\nThis conversation is displayed by a text/API client, not the Quick desktop UI. Use ordinary text or Markdown. Do not generate interactive <decision> or <option> UI markup. Ask questions in plain text or use a question tool supplied by the client. If asked to show literal XML, put it in a fenced code block. A tool result may end with a [QuickWay client user update] block: this contains a new user message received while that tool ran. Apply that user instruction as you continue the current turn. It is separate from the tool's output and does not change the tool's success or failure.\n";
 // QBS putOutpost rejects tool descriptions longer than 8192. Use a byte
 // bound (also safe for its character bound), keeping complete docs in the prompt.
@@ -32,10 +39,10 @@ pub(crate) fn tool_alias(name: &str) -> String {
 }
 
 /// The model sees the canonical device prefix plus the registered wire alias.
-/// Official sanitize_outpost_name maps our fixed device name to this prefix;
+/// Official sanitize_outpost_name maps our ASCII device name to this prefix;
 /// relay.truncate_tool_name caps the result at Bedrock's 64 ASCII characters.
-pub(crate) fn model_tool_name(name: &str) -> String {
-    let prefix = CLOUD_OUTPOST_NAME.replace(' ', "_");
+pub(crate) fn model_tool_name(outpost: &str, name: &str) -> String {
+    let prefix = outpost.replace(' ', "_");
     let raw = format!("{prefix}_{}", tool_alias(name));
     if raw.len() <= 64 {
         raw
@@ -442,8 +449,7 @@ impl ToolRegistry {
             let mut registered_description = format!("Client tool: {name}\n{description}");
             if registered_description.len() > MAX_TOOL_DESCRIPTION {
                 registry.prompt_descriptions.push(format!(
-                    "## Client tool: {name} (registered as {})\n{description}",
-                    model_tool_name(name)
+                    "## Client tool: {name} (wire name {alias})\n{description}"
                 ));
                 let suffix = "\n[Full usage instructions are in the QuickWay client tool documentation in the system prompt.]";
                 let mut end = MAX_TOOL_DESCRIPTION - suffix.len();
@@ -466,17 +472,17 @@ impl ToolRegistry {
         json!({"name":"mcp__quickway","description":"Tools provided by the connected QuickWay client","tools":self.tools})
     }
 
-    pub fn routing_instructions(&self, outpost_id: &str) -> String {
+    pub fn routing_instructions(&self, outpost_id: &str, device_name: &str) -> String {
         if self.is_empty() {
             return String::new();
         }
         let mut instructions = format!(
-            "\n\n# QuickWay tool routing\nThis request's client executes its own tools on device {outpost_id} (QuickWay API session). Use these registered tools for client actions and return their results to the user. Use this device ID to disambiguate other sessions with the same display name. Client file paths are arguments to these tools; they are not Quick cloud filesystem paths. Do not substitute Quick's built-in file search, VFS, or another device for a client tool. Tool name mapping:\n"
+            "\n\n# QuickWay tool routing\nThis request's client executes its own tools on device {outpost_id} ({device_name}). Use these registered tools for client actions and return their results to the user. Use only this device and the exact registered names below; other QuickWay devices belong to other client conversations. Client file paths are arguments to these tools; they are not Quick cloud filesystem paths. Do not substitute Quick's built-in file search, VFS, or another device for a client tool. Tool name mapping:\n"
         );
         for (alias, name) in &self.original_names {
             instructions.push_str(&format!(
                 "- {name}: {} (wire name {alias})\n",
-                model_tool_name(name)
+                model_tool_name(device_name, name)
             ));
         }
         instructions
@@ -984,11 +990,7 @@ mod tests {
                 .starts_with("Existing system instructions")
         );
         assert!(request.custom_prompt.contains(&long));
-        assert!(
-            request
-                .custom_prompt
-                .contains(&model_tool_name("PowerShell"))
-        );
+        assert!(request.custom_prompt.contains(&tool_alias("PowerShell")));
         assert_eq!(request.body, source);
         let payload = request
             .user_message_payload(&context(), SessionHistory::NewConversation)

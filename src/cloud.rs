@@ -54,6 +54,49 @@ struct Inner {
     last_model: Mutex<Option<(HistoryKey, ModelObservation)>>,
 }
 
+impl Inner {
+    // Publish the history before the final response: a client can immediately
+    // submit a follow-up as soon as it receives that response.
+    async fn publish_reply(
+        &self,
+        key: HistoryKey,
+        retained: Handle,
+        command: Command,
+        message: Value,
+        terminal: Vec<Value>,
+    ) -> bool {
+        let owner = retained.id.clone();
+        let mut idle = self.idle.lock().await;
+        // The lookup for the next request takes this same lock. For a nonstream
+        // reply the oneshot send is synchronous, so commit only if it succeeds.
+        if let Some(tx) = &command.events {
+            if tx.is_closed() {
+                return false;
+            }
+        } else if command.result.send(Ok(message)).is_err() {
+            return false;
+        }
+        if let Some(previous) = idle.insert(key, retained)
+            && previous.id != owner
+        {
+            previous.stop.send_replace(true);
+        }
+        drop(idle); // Never hold the directory lock while a stream is backpressured.
+        if emit(command.events.as_ref(), terminal).await.is_err() {
+            self.forget_idle_owner(&key, &owner).await;
+            return false;
+        }
+        true
+    }
+
+    async fn forget_idle_owner(&self, key: &HistoryKey, owner: &str) {
+        let mut idle = self.idle.lock().await;
+        if idle.get(key).is_some_and(|h| h.id == owner) {
+            idle.remove(key);
+        }
+    }
+}
+
 /// The latest completed cloud response, scoped to its signed-in account.
 /// A missing served ID stays unknown; the requested tier is never a substitute.
 #[derive(Clone, serde::Serialize)]
@@ -466,8 +509,8 @@ fn importable_history(request: &ValidatedRequest) -> &[Value] {
     }
 }
 
-async fn emit(command: &Command, events: Vec<Value>) -> Result<(), ModelError> {
-    if let Some(sender) = &command.events {
+async fn emit(sender: Option<&mpsc::Sender<Value>>, events: Vec<Value>) -> Result<(), ModelError> {
+    if let Some(sender) = sender {
         for event in events {
             tokio::time::timeout(Duration::from_secs(10), sender.send(event))
                 .await
@@ -735,7 +778,7 @@ impl Connection {
             vec![request.tools.capability()]
         };
         api(&self.client, &self.session, "putOutpost", json!({
-            "outpostId":self.outpost,"name":crate::cloud_request::CLOUD_OUTPOST_NAME,"outpostType":"DESKTOP","capabilities":capabilities,"status":"ONLINE"
+            "outpostId":self.outpost,"name":crate::cloud_request::outpost_name(&self.thread),"outpostType":"DESKTOP","capabilities":capabilities,"status":"ONLINE"
         })).await?;
         Ok(())
     }
@@ -789,7 +832,10 @@ impl Connection {
             payload["custom_prompt"] = format!(
                 "{}{}",
                 request.custom_prompt,
-                request.tools.routing_instructions(&self.outpost)
+                request.tools.routing_instructions(
+                    &self.outpost,
+                    &crate::cloud_request::outpost_name(&self.thread)
+                )
             )
             .into();
             send_event(
@@ -883,7 +929,7 @@ impl Connection {
                     matches!(e["type"].as_str(), Some("message_delta" | "message_stop"))
                 });
                 terminal.extend(end);
-                emit(command, progress).await?;
+                emit(command.events.as_ref(), progress).await?;
                 if translator.is_finished() {
                     let mut message = translator.message()?;
                     message["quickway"]["notices"] = json!(request.notices);
@@ -981,7 +1027,7 @@ async fn run_conversation(
     let mut connection = match opened {
         Ok(connection) => connection,
         Err(error) => {
-            let _ = emit(&command, vec![error.event()]).await;
+            let _ = emit(command.events.as_ref(), vec![error.event()]).await;
             let _ = command.result.send(Err(error));
             return;
         }
@@ -1011,20 +1057,12 @@ async fn run_conversation(
                 let key = history_key(&command.request.body, &history, identity);
                 let mut retained = handle.clone();
                 retained.evictable = connection.pending.is_empty();
-                if let Some(previous) = manager.idle.lock().await.insert(key, retained)
-                    && previous.id != handle.id
+                if !manager
+                    .publish_reply(key, retained, command, message, terminal)
+                    .await
                 {
-                    previous.stop.send_replace(true);
-                }
-                if emit(&command, terminal).await.is_err() {
-                    manager.idle.lock().await.remove(&key);
-                    let _ = command
-                        .result
-                        .send(Err("The API client disconnected".into()));
                     break;
                 }
-                let _ = command.result.send(Ok(message));
-                drop(command.events);
                 if connection.pending.is_empty() {
                     connection.current_message = None;
                 }
@@ -1053,12 +1091,7 @@ async fn run_conversation(
                         }
                     }
                 };
-                {
-                    let mut idle = manager.idle.lock().await;
-                    if idle.get(&key).is_some_and(|h| h.id == handle.id) {
-                        idle.remove(&key);
-                    }
-                }
+                manager.forget_idle_owner(&key, &handle.id).await;
                 let Some(next) = next else {
                     break;
                 };
@@ -1066,7 +1099,7 @@ async fn run_conversation(
                 new = false;
             }
             Err(error) => {
-                let _ = emit(&command, vec![error.event()]).await;
+                let _ = emit(command.events.as_ref(), vec![error.event()]).await;
                 let _ = command.result.send(Err(error));
                 break;
             }
@@ -1077,6 +1110,109 @@ async fn run_conversation(
 
 #[cfg(test)]
 mod tests {
+    fn test_handle(id: &str) -> Handle {
+        Handle {
+            id: id.into(),
+            sender: mpsc::channel(1).0,
+            stop: watch::channel(false).0,
+            evictable: false,
+        }
+    }
+
+    fn test_command(
+        events: Option<mpsc::Sender<Value>>,
+    ) -> (Command, oneshot::Receiver<Result<Value, ModelError>>) {
+        let (result, rx) = oneshot::channel();
+        let body =
+            json!({"model":"quick-smart","messages":[{"role":"user","content":"same history"}]});
+        (
+            Command {
+                request: ValidatedRequest::from_body(body, "smart", None).unwrap(),
+                session: crate::portable::tests::fixture(false),
+                events,
+                result,
+            },
+            rx,
+        )
+    }
+
+    #[tokio::test]
+    async fn delivery_cancelled_stream_does_not_remove_new_owner_of_same_history() {
+        let manager = Manager::default();
+        let key = [1; 32];
+        let (tx, rx) = mpsc::channel(1);
+        tx.try_send(json!({"type":"message_delta"})).unwrap();
+        let (first, _unused) = test_command(Some(tx));
+        let mut blocked = Box::pin(manager.0.publish_reply(
+            key,
+            test_handle("first"),
+            first,
+            json!({}),
+            vec![json!({"type":"message_stop"})],
+        ));
+        assert!(futures_util::poll!(&mut blocked).is_pending());
+        assert_eq!(manager.0.idle.lock().await[&key].id, "first");
+        let (second, result) = test_command(None);
+        assert!(
+            manager
+                .0
+                .publish_reply(key, test_handle("second"), second, json!("reply"), vec![])
+                .await
+        );
+        assert_eq!(result.await.unwrap().unwrap(), "reply");
+        drop(rx); // The superseded stream can no longer deliver its terminal event.
+        assert!(!blocked.await);
+        assert!(
+            manager
+                .0
+                .idle
+                .lock()
+                .await
+                .get(&key)
+                .is_some_and(|h| h.id == "second")
+        );
+    }
+
+    #[tokio::test]
+    async fn delivery_abandoned_nonstream_does_not_retain_an_unreachable_tool_session() {
+        let manager = Manager::default();
+        let key = [2; 32];
+        let (command, result) = test_command(None);
+        drop(result);
+        assert!(
+            !manager
+                .0
+                .publish_reply(key, test_handle("aborted"), command, json!({}), vec![])
+                .await
+        );
+        assert!(!manager.0.idle.lock().await.contains_key(&key));
+    }
+
+    #[tokio::test]
+    async fn delivery_stream_uses_events_and_does_not_need_a_nonstream_receiver() {
+        let manager = Manager::default();
+        let key = [3; 32];
+        let (tx, mut rx) = mpsc::channel(1);
+        let (command, unused_result) = test_command(Some(tx));
+        drop(unused_result);
+        let event = json!({"type":"message_stop"});
+        assert!(
+            manager
+                .0
+                .publish_reply(
+                    key,
+                    test_handle("stream"),
+                    command,
+                    json!({}),
+                    vec![event.clone()]
+                )
+                .await
+        );
+        assert_eq!(rx.recv().await, Some(event));
+        assert_eq!(rx.recv().await, None);
+        assert!(manager.0.idle.lock().await.contains_key(&key));
+    }
+
     #[test]
     fn disconnected_tools_recover_only_with_complete_results_and_keep_user_text() {
         let body = json!({"model":"quick-smart","messages":[
@@ -1273,3 +1409,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod socket_tests;

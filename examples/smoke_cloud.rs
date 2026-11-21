@@ -10,13 +10,13 @@ async fn main() -> Result<()> {
     let suite = std::env::args().nth(1).unwrap_or_else(|| "messages".into());
     let script = match suite.as_str() {
         "messages" => "scripts/smoke-test.py",
-        "openai" => "scripts/smoke-openai.py",
+        "openai" | "parallel-tools" => "scripts/smoke-openai.py",
         "history" => "scripts/smoke-cloud.py",
         "claude" | "claude-normal" => "scripts/smoke-claude.py",
         "claude-project" | "claude-edit" => "scripts/smoke-claude-project.py",
         "codex-project" | "codex-recovery" => "scripts/smoke-codex-project.py",
         _ => anyhow::bail!(
-            "suite must be messages, openai, history, claude, claude-normal, claude-project, claude-edit or codex-project"
+            "suite must be messages, openai, parallel-tools, history, claude, claude-normal, claude-project, claude-edit, codex-project or codex-recovery"
         ),
     };
     let directory = tempfile::tempdir()?;
@@ -60,6 +60,9 @@ async fn main() -> Result<()> {
         .args(["--model", "quick-smart"]);
     if suite == "messages" {
         child.args(["--tools", "--auto-tools"]);
+    }
+    if suite == "parallel-tools" {
+        child.arg("--parallel-tools");
     }
     if suite == "claude-normal" {
         child.arg("--normal");

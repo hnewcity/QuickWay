@@ -3,7 +3,7 @@
 //! This is an offline, deterministic conversion. The caller supplies only the
 //! prefix before the current turn, creates a fresh incognito session, and adds
 //! import timestamps before posting the batch. It never resumes a live tool.
-use crate::cloud_request::model_tool_name;
+use crate::cloud_request::{model_tool_name, outpost_name};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,6 +15,7 @@ struct Call {
 
 struct Builder<'a> {
     thread: &'a str,
+    device_name: String,
     events: Vec<Value>,
     pending: BTreeMap<String, Call>,
     seen: BTreeSet<String>,
@@ -31,6 +32,7 @@ pub fn events(messages: &[Value], thread: &str) -> Result<Vec<Value>, String> {
     }
     let mut builder = Builder {
         thread,
+        device_name: outpost_name(thread),
         events: Vec::new(),
         pending: BTreeMap::new(),
         seen: BTreeSet::new(),
@@ -110,7 +112,7 @@ impl Builder<'_> {
                     if !self.seen.insert(id.into()) {
                         return Err("Duplicate tool_use ID in imported history".into());
                     }
-                    let name = model_tool_name(name);
+                    let name = model_tool_name(&self.device_name, name);
                     self.push("tool_start", message_id, json!({"tool_use_id":id,"tool_name":name}));
                     self.push("tool_arguments", message_id, json!({"tool_use_id":id,"arguments":input}));
                     self.pending.insert(id.into(), Call { message_id:message_id.into(), name });
@@ -318,7 +320,10 @@ mod tests {
     fn tools_preserve_identity_input_result_blocks_status_and_user_text() {
         let output = events(&tool_history(), "thread").unwrap();
         let start = output.iter().find(|e| e["type"] == "tool_start").unwrap();
-        assert_eq!(start["data"]["tool_name"], model_tool_name("read-file"));
+        assert_eq!(
+            start["data"]["tool_name"],
+            model_tool_name(&outpost_name("thread"), "read-file")
+        );
         let args = output
             .iter()
             .find(|e| e["type"] == "tool_arguments")
@@ -367,15 +372,37 @@ mod tests {
     #[test]
     fn model_tool_names_match_official_sanitizer_and_truncation_fixtures() {
         assert_eq!(
-            model_tool_name("fixture_echo"),
+            model_tool_name("QuickWay API session", "fixture_echo"),
             "QuickWay_API_session_quickway__519bd67e66cde77c_fixture_echo"
         );
         assert_eq!(
-            model_tool_name(&"x".repeat(128)),
+            model_tool_name("QuickWay API session", &"x".repeat(128)),
             "t_f30692e9_n_quickway__24da1b81d0b16df6_xxxxxxxxxxxxxxxxxxxxxxxx"
         );
         for size in 1..=128 {
-            assert!(model_tool_name(&"x".repeat(size)).len() <= 64);
+            assert!(model_tool_name("QuickWay API session", &"x".repeat(size)).len() <= 64);
+        }
+    }
+
+    #[test]
+    fn same_client_tool_in_two_conversations_has_distinct_routing_and_history_names() {
+        let registry = crate::cloud_request::ValidatedRequest::from_body(json!({
+            "model":"quick-smart", "max_tokens":64, "messages":[{"role":"user", "content":"test"}],
+            "tools":[{"name":"read-file","input_schema":{"type":"object"}}]
+        }), "smart", None).unwrap().tools;
+        let mut names = BTreeSet::new();
+        for thread in ["session-a", "session-b"] {
+            let device = outpost_name(thread);
+            let output = events(&tool_history(), thread).unwrap();
+            let start = output.iter().find(|e| e["type"] == "tool_start").unwrap();
+            let name = start["data"]["tool_name"].as_str().unwrap();
+            assert_eq!(name, model_tool_name(&device, "read-file"));
+            let prompt = registry.routing_instructions("example-device-id", &device);
+            assert!(prompt.contains(&device) && prompt.contains(name));
+            assert!(
+                names.insert(name.to_owned()),
+                "tool names must be session-specific"
+            );
         }
     }
 

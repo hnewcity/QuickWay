@@ -116,7 +116,7 @@ Mac 首次读取 Quick 登录时，进入「连接设置」点击「授权钥匙
 | `quick-smart` | `smart`（新用户默认） |
 | `quick-advanced` | `advanced` |
 
-这些 ID 不是固定的底层型号；具体模型由 Quick 调度，可能因云端映射更新或故障回退而变化。Advanced 是否可调用取决于账号权限。旧固定型号通道可能返回 `AccessDeniedException: This client is not supported for this request.`，即使登录、目录和额度查询正常。QuickWay 不会把已有固定型号选择自动替换成云端模式。
+这些 ID 不是固定的底层型号；具体模型由 Quick 调度，可能因云端映射更新或故障回退而变化。QuickWay 会列出它支持的档位，并不代表云端已验证每一档的账号权限。若官方 Amazon Quick 的档位菜单没有 Advanced，请选择菜单中已有的档位（例如 Smart）；不要把 `/v1/models` 列出 `quick-advanced` 当成已获授权。旧固定型号通道可能返回 `AccessDeniedException: This client is not supported for this request.`，即使登录、目录和额度查询正常。QuickWay 不会把已有固定型号选择自动替换成云端模式。
 
 ### 历史固定型号验证记录
 
@@ -172,6 +172,7 @@ QuickWay 聊天 / Claude Code / Codex → localhost 兼容 API → Quick 云端�
 `/v1/chat/completions` 和 `/v1/responses` 将 OpenAI 请求转换为 Anthropic Messages，再走与 `/v1/messages` 相同的模型解析、思考强度和上游路由，结果转换回 OpenAI 格式（含 SSE 流式）。OpenAI SDK 将 `base_url` 设为 `http://127.0.0.1:8741/v1`，`api_key` 使用本地代理密钥。`/v1/models` 同时返回 OpenAI 的 `object`/`created`/`owned_by` 字段。
 
 - 云端模式支持文本、system/developer、自动函数工具调用及流式 usage。云端不支持图片/文档、非空 `stop`、`temperature`/`top_p`/`top_k`、强制工具选择、`strict: true` 工具和 `json_schema` 结构化输出，会明确返回错误；旧固定型号通道的支持范围取决于具体模型。
+- **怎样确认工具真的被调用？** 云端模式只支持自动工具选择。实测中，即使请求提供了工具，云端也可能只返回普通文本，提示工具不可用。`HTTP 200`、`stop` 或回复里出现工具名都不能证明它执行过。依赖工具结果的客户端应检查结构化的 `tool_use`、`tool_calls` 或 `function_call`，再按调用 ID 回传真实结果；不要根据文字自行执行或自动重试有副作用的操作。要排查多会话问题，可用 `cargo run --example smoke_cloud -- parallel-tools`：两个客户端会同时调用同名的合成工具，单独核对参数和结果。测试使用 Python OpenAI SDK 并消耗少量真实额度。
 - `reasoning_effort` 或 `reasoning.effort`：`none`/`minimal` 对应 Off，较高档位归一到 High；桌面启动器的 `x-quickway-thinking-effort` 请求头优先。云端的 Off 和 token 预算只作为强度提示，不保证禁用推理或限制推理量。旧通道返回的思考文本可通过 Chat Completions 的 `reasoning_content` 表达。
 - 兼容层未指定输出上限时使用 `max_tokens: 32000`；云端模式不会把这个值或客户端传入的值当作上游强制上限。
 - Responses 不保存可供引用的响应 ID：`previous_response_id`、`conversation`、`item_reference` 会被拒绝，请每次发送完整 `input`。这不代表底层云端连接无状态；完整历史仍需满足上文的会话恢复限制。旧通道的 Claude 签名思考使用 reasoning 项的 `encrypted_content` 回传，带签名 thinking 不支持冷导入云端会话。
