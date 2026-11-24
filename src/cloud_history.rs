@@ -124,6 +124,8 @@ impl Builder<'_> {
         if text.is_empty() && !tools_started {
             return Err("Imported assistant message has no text or tools".into());
         }
+        // Replaying a leaked conversation marker teaches the model to repeat it.
+        let text = crate::cloud_text::strip_references(&text);
         self.push(
             "message_assistant_complete",
             message_id,
@@ -460,6 +462,25 @@ mod tests {
             ];
             assert!(events(&input, "thread").is_err());
         }
+    }
+
+    #[test]
+    fn leaked_conversation_markers_are_not_replayed() {
+        let marker = "⟨assistant msg-4a8fdcc9-c3 | Thu. 12 Nov 2026, 2:10 PM CST⟩";
+        let quoted = format!("Hello\n```\n{marker}\n```");
+        let input = vec![
+            json!({"role":"user","content":"hi"}),
+            json!({"role":"assistant","content":format!("{marker}{marker}{quoted}")}),
+            json!({"role":"user","content":"again"}),
+            json!({"role":"assistant","content":marker}),
+        ];
+        let output = events(&input, "thread").unwrap();
+        let replies: Vec<_> = output
+            .iter()
+            .filter(|e| e["type"] == "message_assistant_complete")
+            .map(|e| e["data"]["full_content"].as_str().unwrap())
+            .collect();
+        assert_eq!(replies, [quoted.as_str(), ""]);
     }
 
     #[test]

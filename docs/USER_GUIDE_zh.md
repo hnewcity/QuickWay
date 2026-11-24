@@ -30,7 +30,7 @@
 
 从 [GitHub Releases](https://github.com/hnewcity/QuickWay/releases/latest) 下载对应芯片的 `QuickWay_<版本>_aarch64.dmg`（Apple Silicon）或 `QuickWay_<版本>_x64.dmg`（Intel），打开后将 QuickWay 拖入「应用程序」。最低系统版本设置为 macOS 12；使用系统自带的 WKWebView，无需 WebView2。当前包使用 ad-hoc 本地签名，尚未完成 Apple 公证；通过网络分发后可能需要在「隐私与安全性」中确认打开。
 
-- 先在 Amazon Quick 中登录。支持读取生产 App Integrations 社交登录和企业登录的凭据；`quick-*` 云端推理通道目前仅支持 social/AIDP 登录，不支持 enterprise/gateway。凭据从 macOS 钥匙串读取，首次访问时按系统提示授权。
+- 先在 Amazon Quick 中登录。支持读取生产 App Integrations 社交登录和企业登录的凭据；两者都可以使用 `quick-*` 云端推理通道。独立的 Gateway 传输（`gateway` 或 `social_gateway`）尚不支持。凭据从 macOS 钥匙串读取，首次访问时按系统提示授权。
 - 企业账号请保持 Amazon Quick 运行以续期登录。Mac 授权成功后，状态、额度和模型目录共用进程内的有效凭据；有效期内不重复读取钥匙串。令牌过期时才尝试读取 Quick 续期后的凭据，不使用社交登录的刷新接口。能读取凭据或目录不代表推理通道可用。
 - Claude Code 使用 Terminal 打开，支持官方 `~/.local/bin` 安装、Homebrew 和进程 PATH 中的安装。Finder 启动时也能检测常用安装位置；终端连接命令按 zsh/bash 转义。
 - `⌘N` 新建对话，`⌘Q` 退出。关闭窗口后代理仍在菜单栏运行，点击 Dock 图标可重新打开窗口。
@@ -107,7 +107,7 @@ Mac 首次读取 Quick 登录时，进入「连接设置」点击「授权钥匙
 
 ## 支持的模型
 
-桌面界面只展示以下四种云端档位，推荐使用 `quick-smart`。支持的 social/AIDP 登录会在 `/v1/models` 中的固定型号目录之外加入这些 ID；API 目录中的固定型号不再作为桌面选项展示：
+桌面界面只展示以下四种云端档位，推荐使用 `quick-smart`。支持的个人或企业 AIDP 登录会在 `/v1/models` 中的固定型号目录之外加入这些 ID；API 目录中的固定型号不再作为桌面选项展示：
 
 | API 模型 ID | Quick 智能体模式 |
 | --- | --- |
@@ -242,7 +242,7 @@ codex
 
 ## 范围与限制
 
-- Windows 和 macOS 可以读取生产 App Integrations 社交及企业登录；新的 `quick-*` 推理通道仅支持 social/AIDP，不支持 enterprise/gateway。企业凭据读取或目录查询成功，不代表固定型号推理获准。
+- Windows 和 macOS 可以读取生产 App Integrations 社交及企业登录；`quick-*` 推理沿用同一 AIDP 通道，不支持独立的 Gateway 通道。能列出档位或固定型号不代表服务端授予了该账号推理权限。
 - 云端支持文本、system 和自动工具调用。图片/文档、采样参数、非空 stop、强制工具选择、严格工具 schema 和结构化输出均不支持。模型目录中出现某个固定型号也不代表其所有功能已适配。
 - 云端的具体模型、生成长度和推理限额由 Quick 控制；`max_tokens`、思考预算及 Off 不提供硬性保证。旧 GPT/Claude 通道保留原参数适配，但可能被服务端拒绝。
 - 云端历史恢复仅覆盖上文列出的已完成历史，未完成工具需要原会话。服务端工具、延迟工具搜索和强制禁止并行工具调用尚未适配，启动脚本关闭相关实验 beta 与 tool search。

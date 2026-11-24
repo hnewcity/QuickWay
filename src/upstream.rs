@@ -148,20 +148,19 @@ impl Upstream {
     }
 }
 
-/// Headers every Quick App Integrations call carries, matching Quick's own client.
 /// The cloud tiers are not part of Quick's directory. The directory is cached, so
 /// it can look synced while the session behind it fails; report why the tiers are
 /// missing instead of returning an apparently complete, empty choice.
 fn add_cloud_tiers(catalog: &mut models::Catalog, session: Result<&auth::QuickSession, &anyhow::Error>) {
-    match session {
-        Ok(session) if !session.managed_by_quick => catalog.models.extend(crate::cloud::models()),
-        Ok(_) => {
-            catalog.error = Some("Quick 云端档位目前只支持个人（social/AIDP）登录，当前是企业登录。".into())
-        }
-        Err(error) => catalog.error = Some(format!("云端档位暂不可用：{error}")),
+    // The AIDP transport serves both social and enterprise identities. Match
+    // dispatch's tenant check, including for imported credentials.
+    match session.map_err(ToString::to_string).and_then(|s| tenant_url(s, "/").map_err(|e| e.to_string())) {
+        Ok(_) => catalog.models.extend(crate::cloud::models()),
+        Err(reason) => catalog.error = Some(format!("云端档位暂不可用：{reason}")),
     }
 }
 
+/// Headers every Quick App Integrations call carries.
 pub(crate) fn authorized(client: &Client, url: Url, bearer: &str) -> reqwest::RequestBuilder {
     client
         .post(url)
@@ -280,8 +279,15 @@ mod error_tests {
 
         let mut enterprise = synced();
         add_cloud_tiers(&mut enterprise, Ok(&crate::portable::tests::fixture(true)));
-        assert!(enterprise.models.is_empty());
-        assert!(enterprise.error.unwrap().contains("企业登录"));
+        assert_eq!(tiers(&enterprise), tiers(&social));
+        assert_eq!(enterprise.error, None);
+
+        let mut other = crate::portable::tests::fixture(true);
+        other.tenant_url = "https://gateway.example.invalid".into();
+        let mut unsupported = synced();
+        add_cloud_tiers(&mut unsupported, Ok(&other));
+        assert!(unsupported.models.is_empty());
+        assert!(unsupported.error.unwrap().contains("App Integrations"));
 
         let mut failed = synced();
         let error = anyhow::anyhow!("Quick token refresh could not reach AWS; check the network and try again");

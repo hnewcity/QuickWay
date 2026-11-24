@@ -1,4 +1,4 @@
-//! Stateful adapter for Quick's official social cloud conversation protocol.
+//! Stateful adapter for Quick's App Integrations (AIDP) cloud conversation protocol.
 //!
 //! Each conversation owns its WebSocket and virtual outpost. Tools are returned
 //! to the API client for execution; this module never executes a local tool.
@@ -30,6 +30,9 @@ use tokio_tungstenite::{
 };
 
 const APP_VERSION: &str = "1.2.4308";
+#[cfg(target_os = "macos")]
+const SURFACE: &str = "QUICK_WORK_DESKTOP_MAC";
+#[cfg(not(target_os = "macos"))]
 const SURFACE: &str = "QUICK_WORK_DESKTOP_WINDOWS";
 const IDLE_TTL: Duration = Duration::from_secs(10 * 60);
 const TURN_TIMEOUT: Duration = Duration::from_secs(180);
@@ -355,9 +358,6 @@ pub async fn dispatch(
             message: e.to_string(),
             retry_after: None,
         })?;
-    if session.managed_by_quick {
-        return Err(Failure {status:400,message:"Quick cloud modes currently support social/AIDP sign-ins; this account uses a different transport.".into(),retry_after:None});
-    }
     upstream::tenant_url(&session, "/").map_err(|e| Failure {
         status: 400,
         message: e.to_string(),
@@ -1211,6 +1211,34 @@ mod tests {
         assert_eq!(rx.recv().await, Some(event));
         assert_eq!(rx.recv().await, None);
         assert!(manager.0.idle.lock().await.contains_key(&key));
+    }
+
+    #[tokio::test]
+    async fn enterprise_aidp_dispatch_reaches_its_own_conversation() {
+        let dir = tempfile::tempdir().unwrap();
+        let stored = dir.path().join("test.qwc");
+        let portable = crate::portable::PortableSession::from_session(
+            crate::portable::tests::fixture(true),
+        ).unwrap();
+        crate::portable::save(&stored, &portable).unwrap();
+        let upstream = Upstream::new(dir.path().into()).unwrap().with_credential_file(stored);
+        let body = json!({"model":"quick-smart", "messages":[{"role":"user","content":"hello"}]});
+        let key = history_key(&body, &[], portable.identity);
+        let (tx, mut rx) = mpsc::channel(1);
+        upstream.cloud.0.idle.lock().await.insert(key, Handle {
+            id: "test-conversation".into(), sender: tx, stop: watch::channel(false).0, evictable: true,
+        });
+        let peer = async {
+            let cmd = rx.recv().await.unwrap();
+            assert!(cmd.session.managed_by_quick);
+            assert_eq!(cmd.session.access_token, portable.session.access_token);
+            let _ = cmd.result.send(Ok(json!({"type":"message","id":"synthetic"})));
+        };
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(3), async {
+            tokio::try_join!(async { dispatch(&upstream, body, "smart", None).await },
+                             async { peer.await; Ok(()) })
+        }).await.expect("dispatch did not reach the enterprise session").unwrap_or_else(|f| panic!("dispatch rejected enterprise: {}", f.status));
+        assert!(matches!(result, Outcome::Message(m) if m["id"] == "synthetic"));
     }
 
     #[test]

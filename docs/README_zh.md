@@ -106,7 +106,7 @@ npm run desktop:build
 | `quick-smart` | `smart`（推荐默认值） |
 | `quick-advanced` | `advanced` |
 
-这些 ID 选择的是 Quick 云端智能体模式，具体模型由 Quick 调度。目前云端通道支持 social/AIDP 登录，不支持 enterprise/gateway 登录。
+这些 ID 选择的是 Quick 云端智能体模式，具体模型由 Quick 调度。App Integrations（AIDP）通道支持个人（`social`）和企业（`enterprise`）登录，不支持另一种 Gateway 通道（`gateway` 和 `social_gateway`）。档位可选不等于账号已获授权，权限由 Quick 服务端校验。
 
 旧的固定模型通道可能返回 `AccessDeniedException: This client is not supported for this request.`。登录成功或成功获取模型目录，不代表推理请求可用。API 目录仍保留固定型号，桌面选择器仅展示云端档位；已有固定型号选择需要手动重新选择档位。
 

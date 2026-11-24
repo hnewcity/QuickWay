@@ -25,6 +25,7 @@ struct Profile {
 // Deliberately does not implement Debug.
 #[derive(Clone, Deserialize, Serialize)]
 pub struct QuickSession {
+    /// Token renewal belongs to the Quick client; this does not select the wire protocol.
     #[serde(skip)]
     pub managed_by_quick: bool,
     /// The bearer presented upstream: the ID token for enterprise logins that
@@ -134,8 +135,9 @@ fn parse_profile(bytes: &[u8]) -> Result<Profile> {
         .find(|p| p.id == manifest.last_active)
         .context("Quick active profile not found")?;
     let prefix = match profile.provider.as_str() {
-        "social" | "social_gateway" => "social-",
+        "social" => "social-",
         "enterprise" => "enterprise-",
+        "gateway" | "social_gateway" => bail!("QuickWay 尚不支持 Gateway 传输通道；当前支持 App Integrations (AIDP) 的个人和企业登录。"),
         _ => bail!("当前 Quick 登录通道尚不支持，请使用 App Integrations 社交或企业登录。"),
     };
     if !profile.id.starts_with(prefix)
@@ -419,7 +421,7 @@ mod tests {
     fn profile_selection_is_scoped_to_supported_provider_and_safe_identifier() {
         for (provider, id, valid) in [
             ("social", "social-test", true),
-            ("social_gateway", "social-test", true),
+            ("social_gateway", "social-test", false),
             ("enterprise", "enterprise-test", true),
             ("gateway", "gateway-test", false),
             ("enterprise", "social-test", false),

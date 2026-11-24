@@ -1,4 +1,4 @@
-//! Quick social/AIDP WebSocket framing, separate from Gateway's CBOR codec.
+//! App Integrations WebSocket framing (social and enterprise), distinct from Gateway CBOR.
 //!
 //! Outbound messages are binary UTF-8 JSON. Inbound messages contain one or
 //! more AWS EventStream frames whose JSON `payload` field wraps base64 JSON.

@@ -106,7 +106,7 @@ Use an ID returned by `GET /v1/models`. New desktop installations default to `qu
 | `quick-smart` | `smart` (recommended default) |
 | `quick-advanced` | `advanced` |
 
-These IDs select Quick's cloud agent modes. They are gateway routes, not a per-account entitlement check. If Advanced is absent from your Amazon Quick mode picker, select a tier available there, such as Smart. Quick chooses the concrete model. The cloud route currently supports social/AIDP sign-ins; enterprise/gateway sign-ins are not supported by this route.
+These IDs select Quick's cloud agent modes. Quick chooses the concrete model. Both personal (`social`) and enterprise (`enterprise`) sign-ins on the App Integrations (AIDP) transport use this route. The separate Gateway transport (`gateway` and `social_gateway`) is not supported. Listing a mode does not grant access; Quick enforces account permissions on each request. If Advanced is absent from your Amazon Quick mode picker, select a tier available there, such as Smart.
 
 The legacy fixed-model route can return `AccessDeniedException: This client is not supported for this request.` A successful sign-in or model catalog fetch does not establish inference access. Fixed IDs remain in the API catalog, while desktop pickers show only cloud tiers. Saved fixed-model selections require an explicit tier choice.
 
@@ -206,7 +206,7 @@ Run `quickway doctor --probe-model quick-smart` to also make one model request (
 
 ### Live cloud checks
 
-These explicit, opt-in checks use synthetic prompts and fixtures with `quick-smart`, but make real requests and consume Quick quota. Run them from the repository root with a supported social/AIDP sign-in and `python` available on PATH. Each command starts a temporary proxy on a random loopback port with a temporary API key, then shuts it down and unregisters its temporary cloud devices after the suite, including when a check fails.
+These explicit, opt-in checks use synthetic prompts and fixtures with `quick-smart`, but make real requests and consume Quick quota. Run them from the repository root with a supported personal or enterprise AIDP sign-in and `python` available on PATH. Each command starts a temporary proxy on a random loopback port with a temporary API key, then shuts it down and unregisters its temporary cloud devices after the suite, including when a check fails.
 
 ```sh
 cargo run --example smoke_cloud -- messages
